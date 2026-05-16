@@ -40,6 +40,8 @@ Thumbs.db
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/*.tsbuildinfo
+frontend/.eslintcache
 
 # Logs / local data
 logs/
