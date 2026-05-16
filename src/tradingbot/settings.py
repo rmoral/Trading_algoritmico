@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     )
     web_admin_username: str = Field(default="admin")
     web_admin_password: SecretStr = Field(default=SecretStr(""))
+    web_cookie_secure: bool = Field(
+        default=True,
+        description=(
+            "Send the session cookie only over HTTPS. Override to False ONLY "
+            "for local development without TLS. Production always True."
+        ),
+    )
+    web_session_lifetime_days: int = Field(default=30)
 
     # ===== Logging =====
     log_level: LogLevel = Field(default=LogLevel.INFO)

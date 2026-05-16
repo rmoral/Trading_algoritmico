@@ -39,6 +39,10 @@ uv run python scripts/seed_config.py
 # Run the bot (connects to paper IBKR, exposes /metrics on :9100,
 # answers Telegram commands)
 uv run tradingbot
+
+# In a second terminal: run the web API (auth + dashboard endpoints).
+# Requires WEB_API_SECRET_KEY and WEB_ADMIN_PASSWORD set in .env.
+uv run tradingbot-api
 ```
 
 The bot reads `.env` automatically. Live trading is gated by both

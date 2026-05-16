@@ -48,13 +48,14 @@ dev = [
 
 [project.scripts]
 tradingbot = "tradingbot.main:main"
+tradingbot-api = "tradingbot_api.main:run"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tradingbot"]
+packages = ["src/tradingbot", "src/tradingbot_api"]
 
 [tool.ruff]
 line-length = 100
@@ -80,6 +81,17 @@ select = [
 # These modules mirror ib_insync's camelCase API surface.
 "src/tradingbot/connector/ib_client.py" = ["N802", "N803"]
 "tests/unit/test_ib_client.py" = ["N802", "N803"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI uses Depends/Cookie/Query/Body as call-in-default; allowed.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Cookie",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Path",
+]
 
 [tool.mypy]
 strict = true
