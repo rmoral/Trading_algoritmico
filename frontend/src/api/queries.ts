@@ -73,6 +73,18 @@ export function useConfig() {
   });
 }
 
+export function useUpdateConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      api<ConfigPolicyResponse>("/api/config", {
+        method: "PUT",
+        body: payload,
+      }),
+    onSuccess: (data) => qc.setQueryData(["config"], data),
+  });
+}
+
 // ---------- Active asset ----------
 
 export function useActiveAsset() {

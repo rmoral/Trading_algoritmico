@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/asset", label: "Asset" },
   { to: "/config", label: "Config" },
+  { to: "/me", label: "Account" },
 ];
 
 export function Header() {

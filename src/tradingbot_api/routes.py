@@ -68,6 +68,21 @@ asset_router = APIRouter(prefix="/api/active-asset", tags=["asset"])
 kill_router = APIRouter(prefix="/api/kill", tags=["kill"])
 
 
+def _to_user_response(user: User) -> UserResponse:
+    """Project an ORM User into the wire UserResponse.
+
+    Centralizes the totp_enrolled derivation so both /api/auth/login
+    and /api/me stay in sync.
+    """
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        is_active=user.is_active,
+        last_login_at=user.last_login_at,
+        totp_enrolled=user.totp_secret_encrypted is not None,
+    )
+
+
 # =========================================================
 # Health
 # =========================================================
@@ -92,7 +107,7 @@ async def login(
     session_factory: Annotated[
         async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
     ],
-) -> User:
+) -> UserResponse:
     async with session_factory() as db:
         user = (
             await db.execute(select(User).where(User.username == body.username))
@@ -131,7 +146,7 @@ async def login(
             samesite="lax",
             path="/",
         )
-        return user
+        return _to_user_response(user)
 
 
 @auth_router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -166,8 +181,8 @@ async def logout(
 
 
 @me_router.get("", response_model=UserResponse)
-async def me(user: Annotated[User, Depends(get_current_user)]) -> User:
-    return user
+async def me(user: Annotated[User, Depends(get_current_user)]) -> UserResponse:
+    return _to_user_response(user)
 
 
 # =========================================================

@@ -4,6 +4,7 @@ import { AssetPage } from "./pages/AssetPage";
 import { ConfigPage } from "./pages/ConfigPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MePage } from "./pages/MePage";
 import { ProtectedRoute } from "./pages/ProtectedRoute";
 
 export const router = createBrowserRouter([
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { path: "dashboard", element: <DashboardPage /> },
       { path: "asset", element: <AssetPage /> },
       { path: "config", element: <ConfigPage /> },
+      { path: "me", element: <MePage /> },
     ],
   },
   { path: "*", element: <Navigate to="/dashboard" replace /> },

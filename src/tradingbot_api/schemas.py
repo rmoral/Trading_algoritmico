@@ -35,12 +35,11 @@ class TOTPDisenrollRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: UUID
     username: str
     is_active: bool
     last_login_at: datetime | None = None
+    totp_enrolled: bool = False
 
 
 class OpenPositionResponse(BaseModel):

@@ -9,6 +9,7 @@ export interface UserResponse {
   username: string;
   is_active: boolean;
   last_login_at: string | null;
+  totp_enrolled: boolean;
 }
 
 export interface OpenPositionResponse {
