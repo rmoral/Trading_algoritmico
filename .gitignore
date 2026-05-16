@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtual env
+.venv/
+venv/
+
+# Env / secrets — never commit
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+infra/ibc/config.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend (Phase 2+)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Logs / local data
+logs/
+*.log
+
+# Docker volumes
+postgres-data/
+redis-data/
+grafana-data/
+prometheus-data/
+caddy-data/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Note: uv.lock IS committed for reproducibility.

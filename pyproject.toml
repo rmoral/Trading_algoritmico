@@ -1,0 +1,88 @@
+[project]
+name = "tradingbot"
+version = "0.1.0"
+description = "Automated scalping bot for US equities via Interactive Brokers, with web app for configuration and monitoring."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Ruben Moral" }]
+dependencies = [
+    # IBKR
+    "ib_insync>=0.9.86",
+    # Validation, config
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    # Logging
+    "structlog>=24.1",
+    # Database
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "asyncpg>=0.29",
+    # Cache / pub-sub
+    "redis>=5.0",
+    # Telegram
+    "python-telegram-bot>=21.0",
+    # Observability
+    "prometheus-client>=0.20",
+    # Web API
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    # Auth
+    "argon2-cffi>=23.1",
+    "pyotp>=2.9",
+    "itsdangerous>=2.1",
+    # YAML for bootstrap defaults
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.99",
+    "ruff>=0.3",
+    "mypy>=1.9",
+    "types-redis",
+    "types-pyyaml",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tradingbot"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "A",   # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "N",   # pep8-naming
+    "T20", # flake8-print — enforce no print()
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = "src"
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: tests that require external services (postgres, redis, paper IBKR)",
+    "property: hypothesis-based tests",
+]

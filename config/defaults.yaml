@@ -1,0 +1,58 @@
+# Bootstrap defaults for tradingbot runtime configuration.
+#
+# These are seeded into the `config_policies` table on first run via
+# `scripts/seed_config.py`. Runtime values live in the database and are
+# edited through the web app; this file is only used to initialize a
+# fresh install.
+
+# Capital and sizing
+account_equity_target_usd:        150000
+max_position_size_usd:            50000     # 33% of equity, hard cap
+
+# Per-trade
+stop_loss_pct:                    0.5       # of entry price
+min_profit_per_trade_usd:         100
+max_profit_per_trade_usd:         500
+min_r_multiple:                   1.5       # target/risk minimum
+max_commission_pct_of_target:     5.0       # skip if commissions > 5% of expected profit
+
+# S/R thresholds
+sr_strong_threshold:              70
+sr_weak_threshold:                40
+sr_partial_entry_pct:             50        # % of position on weak-signal first entry
+sr_level_tolerance_pct:           0.05      # +/- band around a level for touch detection
+sr_lookback_minutes:              120       # how far back to scan for level candidates
+
+# S/R strength weights (must sum to 1.0)
+sr_strength_weights:
+  clean_touches:                  0.35
+  volume_at_price:                0.30
+  ma_confluence:                  0.20
+  persistence:                    0.10
+  rejection_quality:              0.05
+
+# Daily caps (circuit breaker triggers)
+max_daily_loss_usd:               2250      # 1.5% of account -> trip
+max_trades_per_day:               50        # cap, not target
+max_orders_per_minute:            30        # technical rate limit
+
+# Market microstructure filters
+min_spread_bps:                   0
+max_spread_bps:                   20        # skip wider spreads
+forbidden_tickers:                []
+earnings_blackout:                true
+halt_resume_cooldown_seconds:     60
+
+# End-of-day
+no_new_entries_before_close_minutes: 15
+force_flatten_before_close_minutes:  5
+
+# Circuit breaker
+consecutive_losses_limit:         5
+drawdown_pct_from_open:           1.5
+
+# Order timing
+entry_limit_cancel_seconds:       5         # cancel marketable-limit if unfilled
+
+# Config polling
+config_reload_seconds:            30        # how often the bot re-reads config_policies
