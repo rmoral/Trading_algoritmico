@@ -40,6 +40,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "hypothesis>=6.99",
+    "fakeredis>=2.21",
     "ruff>=0.3",
     "mypy>=1.9",
     "types-redis",

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from tradingbot.persistence.models import User
 from tradingbot.persistence.repositories import PnLRepository, PositionsRepository
 from tradingbot.settings import Settings
+from tradingbot.state import KILL_REQUEST_KEY, BotStateReader
 from tradingbot_api.asset_service import (
     AssetChangeBlockedError,
     get_current_asset,
@@ -27,6 +29,7 @@ from tradingbot_api.auth import (
     create_session,
     delete_session,
     get_current_user,
+    get_redis_dep,
     get_session_factory_dep,
     get_settings_dep,
     verify_password,
@@ -38,6 +41,7 @@ from tradingbot_api.schemas import (
     BotStatusResponse,
     ConfigPolicyResponse,
     HealthResponse,
+    KillRequest,
     LoginRequest,
     OpenPositionResponse,
     PnLResponse,
@@ -51,6 +55,7 @@ me_router = APIRouter(prefix="/api/me", tags=["me"])
 status_router = APIRouter(prefix="/api/status", tags=["status"])
 config_router = APIRouter(prefix="/api/config", tags=["config"])
 asset_router = APIRouter(prefix="/api/active-asset", tags=["asset"])
+kill_router = APIRouter(prefix="/api/kill", tags=["kill"])
 
 
 # =========================================================
@@ -151,23 +156,33 @@ async def me(user: Annotated[User, Depends(get_current_user)]) -> User:
 
 @status_router.get("", response_model=BotStatusResponse)
 async def bot_status(
-    request: Request,
     session_factory: Annotated[
         async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
     ],
+    redis: Annotated[Redis, Depends(get_redis_dep)],  # type: ignore[type-arg]
     _user: Annotated[User, Depends(get_current_user)],
 ) -> BotStatusResponse:
     positions_repo = PositionsRepository(session_factory)
     pnl_repo = PnLRepository(session_factory)
+    state_reader = BotStateReader(redis)
 
     open_pos = await positions_repo.get_open_position()
     pnl_row = await pnl_repo.get_pnl_for_date(datetime.now(UTC).date())
 
-    kill_switch = getattr(request.app.state, "kill_switch_view", None)
-    kill_tripped = bool(kill_switch.tripped) if kill_switch is not None else False
-    kill_reason = kill_switch.reason if kill_switch is not None else None
+    connection_raw = await state_reader.get_connection()
+    if connection_raw is None:
+        connection_state = "unknown"
+    elif connection_raw:
+        connection_state = "connected"
+    else:
+        connection_state = "disconnected"
+
+    kill = await state_reader.get_kill_switch()
+    kill_tripped = bool(kill.tripped) if kill is not None else False
+    kill_reason = kill.reason if kill is not None else None
 
     return BotStatusResponse(
+        connection_state=connection_state,
         kill_switch_tripped=kill_tripped,
         kill_switch_reason=kill_reason,
         open_position=(
@@ -256,3 +271,28 @@ async def write_active_asset(
         await db.commit()
         await db.refresh(new)
         return ActiveAssetResponse.model_validate(new)
+
+
+# =========================================================
+# Kill switch (remote trip from the web app)
+# =========================================================
+
+
+@kill_router.post("", status_code=status.HTTP_202_ACCEPTED)
+async def request_kill(
+    body: KillRequest,
+    redis: Annotated[Redis, Depends(get_redis_dep)],  # type: ignore[type-arg]
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Request the bot to trip its kill switch.
+
+    202 Accepted: the request is queued in Redis; the bot polls and
+    applies on its next interval (typically within 2 s). Successive
+    requests are idempotent: a re-poll sees the request even if a
+    previous one was already consumed.
+    """
+    reason = f"web:{user.username}"
+    if body.reason:
+        reason = f"{reason}:{body.reason}"
+    await redis.set(KILL_REQUEST_KEY, reason)
+    return Response(status_code=status.HTTP_202_ACCEPTED)

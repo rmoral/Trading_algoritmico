@@ -51,16 +51,19 @@ class PnLResponse(BaseModel):
 
 
 class BotStatusResponse(BaseModel):
-    """High-level snapshot for the dashboard poll endpoint.
+    """High-level snapshot for the dashboard poll endpoint."""
 
-    Most fields read from Postgres; bot connection state and the kill
-    switch will move to Redis once the bot publishes them.
-    """
-
+    connection_state: str  # "connected" | "disconnected" | "unknown"
     kill_switch_tripped: bool
     kill_switch_reason: str | None
     open_position: OpenPositionResponse | None
     today_pnl: PnLResponse | None
+
+
+class KillRequest(BaseModel):
+    """Body for POST /api/kill."""
+
+    reason: str | None = Field(default=None, max_length=255)
 
 
 class HealthResponse(BaseModel):

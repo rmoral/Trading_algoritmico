@@ -103,6 +103,15 @@ def get_session_factory_dep(
     return factory
 
 
+def get_redis_dep(request: Request) -> object:
+    """Return the shared `redis.asyncio.Redis` client.
+
+    Typed as `object` to avoid a hard import of redis at this dep
+    declaration point; routes annotate the concrete type.
+    """
+    return request.app.state.redis
+
+
 async def get_current_user(
     session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory_dep),

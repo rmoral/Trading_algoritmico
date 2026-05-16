@@ -11,6 +11,8 @@ import asyncio
 import signal
 import sys
 
+from redis.asyncio import Redis
+
 from tradingbot.connector import AccountStateLogger, IBClient
 from tradingbot.logging_setup import configure_logging, get_logger
 from tradingbot.monitoring import KillSwitch, TelegramBot, TelegramHandlers
@@ -18,6 +20,11 @@ from tradingbot.monitoring.metrics import start_metrics_server
 from tradingbot.persistence.database import create_engine, create_session_factory
 from tradingbot.persistence.repositories import PnLRepository, PositionsRepository
 from tradingbot.settings import get_settings
+from tradingbot.state import (
+    BotStateBroadcaster,
+    BotStatePublisher,
+    KillSwitchListener,
+)
 
 
 async def amain() -> int:
@@ -43,6 +50,11 @@ async def amain() -> int:
     ib_client = IBClient(settings)
     account_logger = AccountStateLogger(ib_client)
 
+    redis = Redis.from_url(settings.redis_url)
+    state_publisher = BotStatePublisher(redis)
+    state_broadcaster = BotStateBroadcaster(ib_client, kill_switch, state_publisher)
+    kill_listener = KillSwitchListener(redis, kill_switch)
+
     telegram_bot: TelegramBot | None = None
     if settings.telegram_bot_token.get_secret_value():
         handlers = TelegramHandlers(
@@ -63,6 +75,12 @@ async def amain() -> int:
 
     ib_task = asyncio.create_task(ib_client.run(), name="ib_client")
     account_task = asyncio.create_task(account_logger.run(), name="account_state_logger")
+    broadcaster_task = asyncio.create_task(
+        state_broadcaster.run(), name="bot_state_broadcaster"
+    )
+    kill_listener_task = asyncio.create_task(
+        kill_listener.run(), name="kill_switch_listener"
+    )
     tg_task: asyncio.Task[None] | None = None
     if telegram_bot is not None:
         tg_task = asyncio.create_task(telegram_bot.start(), name="telegram_bot")
@@ -72,14 +90,19 @@ async def amain() -> int:
 
     ib_client.stop()
     account_logger.stop()
+    state_broadcaster.stop()
+    kill_listener.stop()
     if telegram_bot is not None:
         await telegram_bot.stop()
 
     await ib_task
     await account_task
+    await broadcaster_task
+    await kill_listener_task
     if tg_task is not None and not tg_task.done():
         await tg_task
 
+    await redis.aclose()  # type: ignore[attr-defined]
     await engine.dispose()
     log.info("shutdown_complete")
     return 0

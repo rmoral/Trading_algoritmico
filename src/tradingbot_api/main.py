@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from tradingbot.logging_setup import configure_logging, get_logger
@@ -27,6 +28,7 @@ from tradingbot_api.routes import (
     auth_router,
     config_router,
     health_router,
+    kill_router,
     me_router,
     status_router,
 )
@@ -36,13 +38,15 @@ def create_app(
     settings: Settings | None = None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     engine: AsyncEngine | None = None,
+    redis: Redis | None = None,  # type: ignore[type-arg]
 ) -> FastAPI:
     """Build the FastAPI app.
 
-    `session_factory` and `engine` can be injected for tests. In
-    production they are built from `settings` inside the lifespan.
+    `session_factory`, `engine`, and `redis` can be injected for tests.
+    In production they are built from `settings` inside the lifespan.
     """
     settings_resolved = settings or get_settings()
+    injected_redis = redis
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -55,6 +59,11 @@ def create_app(
             built_factory = create_session_factory(built_engine)
             app.state.engine = built_engine
             app.state.session_factory = built_factory
+
+        if injected_redis is not None:
+            app.state.redis = injected_redis
+        else:
+            app.state.redis = Redis.from_url(settings_resolved.redis_url)
 
         app.state.settings = settings_resolved
         log.info(
@@ -69,6 +78,8 @@ def create_app(
         yield
 
         log.info("api_shutdown")
+        if injected_redis is None and app.state.redis is not None:
+            await app.state.redis.aclose()
         if session_factory is None and app.state.engine is not None:
             await app.state.engine.dispose()
 
@@ -79,6 +90,7 @@ def create_app(
     app.include_router(status_router)
     app.include_router(config_router)
     app.include_router(asset_router)
+    app.include_router(kill_router)
     return app
 
 
