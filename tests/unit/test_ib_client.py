@@ -191,3 +191,69 @@ def test_get_account_summary_empty_when_disconnected() -> None:
     ib._connected = False
     client = _client(ib)
     assert client.get_account_summary() == {}
+
+
+@pytest.mark.asyncio
+async def test_connection_listener_fires_on_connect_and_disconnect() -> None:
+    """`on_connection_change` is called once on connect, once on drop."""
+    ib = FakeIB()
+    events: list[bool] = []
+
+    async def listener(connected: bool) -> None:
+        events.append(connected)
+
+    client = IBClient(
+        _settings(),
+        ib=ib,
+        heartbeat_seconds=0.005,
+        connect_timeout_seconds=1.0,
+        on_connection_change=listener,
+    )
+
+    async def drive() -> None:
+        for _ in range(50):
+            if ib.isConnected():
+                break
+            await asyncio.sleep(0.005)
+        ib._connected = False  # simulated drop
+        for _ in range(50):
+            if len(events) >= 2:
+                break
+            await asyncio.sleep(0.005)
+        client.stop()
+
+    await asyncio.wait_for(asyncio.gather(client.run(), drive()), timeout=2.0)
+    assert events[0] is True
+    assert events[-1] is False
+
+
+@pytest.mark.asyncio
+async def test_listener_failure_does_not_break_run_loop() -> None:
+    """A raising listener is logged-and-swallowed; the bot keeps running."""
+    ib = FakeIB()
+    calls = 0
+
+    async def listener(_connected: bool) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("listener boom")
+
+    client = IBClient(
+        _settings(),
+        ib=ib,
+        heartbeat_seconds=0.005,
+        connect_timeout_seconds=1.0,
+        on_connection_change=listener,
+    )
+
+    async def drive() -> None:
+        for _ in range(50):
+            if calls >= 1:
+                break
+            await asyncio.sleep(0.005)
+        client.stop()
+
+    await asyncio.wait_for(asyncio.gather(client.run(), drive()), timeout=2.0)
+    assert calls >= 1
+    # The connect succeeded despite the listener raising.
+    assert client.is_connected() is True

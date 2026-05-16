@@ -16,12 +16,15 @@ touch `ib_insync`. Everything else uses `IBClient`.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
 
 from prometheus_client import Gauge
 
 from tradingbot.logging_setup import get_logger
 from tradingbot.settings import Settings
+
+ConnectionListener = Callable[[bool], Awaitable[None]]
 
 INITIAL_BACKOFF_SECONDS: float = 1.0
 MAX_BACKOFF_SECONDS: float = 60.0
@@ -70,14 +73,28 @@ class IBClient:
         ib: IBLike | None = None,
         heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
         connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        on_connection_change: ConnectionListener | None = None,
     ) -> None:
         self._settings = settings
         self._ib: IBLike = ib if ib is not None else _default_ib()
         self._heartbeat_seconds = heartbeat_seconds
         self._connect_timeout_seconds = connect_timeout_seconds
+        self._on_connection_change = on_connection_change
         self._stop_event = asyncio.Event()
         self._log = get_logger(__name__)
         CONNECTION_STATE.set(0)
+
+    async def _notify(self, connected: bool) -> None:
+        if self._on_connection_change is None:
+            return
+        try:
+            await self._on_connection_change(connected)
+        except Exception as exc:  # noqa: BLE001 - listener must not break the loop
+            self._log.warning(
+                "ib_connection_listener_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     @property
     def ib(self) -> IBLike:
@@ -110,6 +127,7 @@ class IBClient:
                     client_id=self._settings.ibkr_client_id,
                     is_live=self._settings.is_live,
                 )
+                await self._notify(connected=True)
                 return
             except (ConnectionRefusedError, TimeoutError, OSError) as exc:
                 CONNECTION_STATE.set(0)
@@ -141,6 +159,8 @@ class IBClient:
 
         On disconnect, the connect loop restarts. On every heartbeat
         interval while connected, emits a structured log line.
+        Connection transitions fire `on_connection_change(connected)`
+        if a listener is registered.
         """
         while not self._stop_event.is_set():
             await self.connect()
@@ -148,6 +168,7 @@ class IBClient:
                 break
             await self._heartbeat_until_disconnect()
             CONNECTION_STATE.set(0)
+            await self._notify(connected=False)
             if not self._stop_event.is_set():
                 self._log.warning("ib_disconnected_reconnecting")
 

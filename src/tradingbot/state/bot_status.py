@@ -128,6 +128,18 @@ class BotStateBroadcaster:
             except TimeoutError:
                 continue
 
+    async def publish_now(self) -> None:
+        """Force an immediate publish of the current local state.
+
+        Called from event-driven hooks (e.g. IBClient on_connection_change)
+        so the dashboard reflects transitions inside one polling cycle
+        instead of waiting for the next periodic tick.
+        """
+        try:
+            await self._publish_once()
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning("bot_state_publish_now_failed", error=str(exc))
+
     async def _publish_once(self) -> None:
         await self._publisher.set_connection(connected=self._ib.is_connected())
         await self._publisher.set_kill_switch(

@@ -47,12 +47,20 @@ async def amain() -> int:
     positions_repo = PositionsRepository(session_factory)
     pnl_repo = PnLRepository(session_factory)
 
-    ib_client = IBClient(settings)
-    account_logger = AccountStateLogger(ib_client)
-
     redis = Redis.from_url(settings.redis_url)
     state_publisher = BotStatePublisher(redis)
+
+    # Forward reference so the listener can reach the broadcaster
+    # built right after.
+    broadcaster_holder: dict[str, BotStateBroadcaster] = {}
+
+    async def _on_connection_change(_connected: bool) -> None:
+        await broadcaster_holder["b"].publish_now()
+
+    ib_client = IBClient(settings, on_connection_change=_on_connection_change)
     state_broadcaster = BotStateBroadcaster(ib_client, kill_switch, state_publisher)
+    broadcaster_holder["b"] = state_broadcaster
+    account_logger = AccountStateLogger(ib_client)
     kill_listener = KillSwitchListener(redis, kill_switch)
 
     telegram_bot: TelegramBot | None = None
