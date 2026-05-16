@@ -1,0 +1,68 @@
+# Caddyfile.example — production reverse proxy for the trading bot.
+#
+# Copy to `Caddyfile` (gitignored — see infra/caddy/.gitignore) and
+# replace `tradingbot.example.com` with the operator's domain. Caddy
+# obtains the certificate from Let's Encrypt automatically on first
+# start, provided port 80 is reachable from the public internet.
+#
+# Layout assumed:
+#   - The FastAPI process listens on 127.0.0.1:8000.
+#   - The built frontend (frontend/dist) is served from
+#     /var/www/tradingbot. Refresh after each `npm run build` with
+#     `sudo rsync -a --delete frontend/dist/ /var/www/tradingbot/`.
+#
+# Behind Cloudflare: enable the free tier with proxying on, and set
+# Cloudflare's SSL mode to "Full (strict)". Caddy still serves real
+# certs to Cloudflare; Cloudflare serves a different cert to the
+# browser.
+
+{
+    # Email used for ACME notifications. Replace before deploying.
+    email ops@example.com
+}
+
+tradingbot.example.com {
+    encode gzip zstd
+
+    # Strict transport security; harmless on first install since Caddy
+    # already redirects HTTP to HTTPS by default.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        # The cookie is HttpOnly+Secure from the API; this is belt + braces.
+        -Server
+    }
+
+    # JSON API + healthcheck go to the FastAPI process.
+    @api path /api/* /healthz
+    handle @api {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    # Everything else is the React SPA. fallback to index.html for
+    # client-side routes (/dashboard, /asset, /config, /me).
+    handle {
+        root * /var/www/tradingbot
+        try_files {path} /index.html
+        file_server
+    }
+
+    # Rate-limit login attempts at the edge. Caddy doesn't ship a
+    # rate-limiter by default; uncomment after installing
+    # caddy-ratelimit (https://github.com/mholt/caddy-ratelimit).
+    #
+    # @login {
+    #     path /api/auth/login
+    #     method POST
+    # }
+    # rate_limit @login {
+    #     zone login 10r/m
+    # }
+
+    log {
+        output file /var/log/caddy/tradingbot.access.log
+        format json
+    }
+}
