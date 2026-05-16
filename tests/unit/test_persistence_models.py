@@ -27,6 +27,7 @@ EXPECTED_TABLES = {
     "audit_log",
     "users",
     "app_sessions",
+    "active_asset_selections",
 }
 
 
@@ -64,6 +65,12 @@ def test_config_policies_single_current_index_exists() -> None:
     """Only one config row is current (effective_to IS NULL)."""
     indexes = Base.metadata.tables["config_policies"].indexes
     assert any(idx.name == "ix_config_policies_single_current" for idx in indexes)
+
+
+def test_active_asset_single_current_index_exists() -> None:
+    """Only one active asset selection is current."""
+    indexes = Base.metadata.tables["active_asset_selections"].indexes
+    assert any(idx.name == "ix_active_asset_single_current" for idx in indexes)
 
 
 def test_orders_ib_order_id_unique() -> None:

@@ -79,3 +79,26 @@ class ConfigPolicyResponse(BaseModel):
     payload: dict[str, Any]
     created_by: str
     created_at: datetime
+
+
+class SetActiveAssetRequest(BaseModel):
+    """Body for PUT /api/active-asset."""
+
+    symbol: str = Field(
+        min_length=1,
+        max_length=8,
+        pattern=r"^[A-Z][A-Z0-9.]{0,7}$",
+        description="US ticker symbol, e.g. AAPL, MSFT, BRK.B.",
+    )
+
+
+class ActiveAssetResponse(BaseModel):
+    """Wire format for the current active asset selection."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    symbol: str
+    effective_from: datetime
+    effective_to: datetime | None
+    set_by: str

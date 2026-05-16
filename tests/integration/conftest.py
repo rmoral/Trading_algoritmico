@@ -48,6 +48,7 @@ _TRUNCATE_TARGETS: tuple[str, ...] = (
     "reconciliation_log",
     "audit_log",
     "config_policies",
+    "active_asset_selections",
     "app_sessions",
     "users",
 )

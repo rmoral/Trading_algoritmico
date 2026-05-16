@@ -17,6 +17,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from tradingbot.persistence.models import User
 from tradingbot.persistence.repositories import PnLRepository, PositionsRepository
 from tradingbot.settings import Settings
+from tradingbot_api.asset_service import (
+    AssetChangeBlockedError,
+    get_current_asset,
+    set_active_asset,
+)
 from tradingbot_api.auth import (
     SESSION_COOKIE_NAME,
     create_session,
@@ -29,12 +34,14 @@ from tradingbot_api.auth import (
 from tradingbot_api.config_schema import ConfigPolicyPayload
 from tradingbot_api.config_service import get_current_policy, update_policy
 from tradingbot_api.schemas import (
+    ActiveAssetResponse,
     BotStatusResponse,
     ConfigPolicyResponse,
     HealthResponse,
     LoginRequest,
     OpenPositionResponse,
     PnLResponse,
+    SetActiveAssetRequest,
     UserResponse,
 )
 
@@ -43,6 +50,7 @@ auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 me_router = APIRouter(prefix="/api/me", tags=["me"])
 status_router = APIRouter(prefix="/api/status", tags=["status"])
 config_router = APIRouter(prefix="/api/config", tags=["config"])
+asset_router = APIRouter(prefix="/api/active-asset", tags=["asset"])
 
 
 # =========================================================
@@ -203,3 +211,48 @@ async def write_config(
         await db.commit()
         await db.refresh(new_policy)
         return ConfigPolicyResponse.model_validate(new_policy)
+
+
+# =========================================================
+# Daily active asset
+# =========================================================
+
+
+@asset_router.get("", response_model=ActiveAssetResponse)
+async def read_active_asset(
+    session_factory: Annotated[
+        async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
+    ],
+    _user: Annotated[User, Depends(get_current_user)],
+) -> ActiveAssetResponse:
+    async with session_factory() as db:
+        current = await get_current_asset(db)
+        if current is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "no active asset selected"
+            )
+        return ActiveAssetResponse.model_validate(current)
+
+
+@asset_router.put("", response_model=ActiveAssetResponse)
+async def write_active_asset(
+    body: SetActiveAssetRequest,
+    session_factory: Annotated[
+        async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
+    ],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ActiveAssetResponse:
+    positions_repo = PositionsRepository(session_factory)
+    async with session_factory() as db:
+        try:
+            new = await set_active_asset(
+                db,
+                symbol=body.symbol,
+                actor=user.username,
+                positions_repo=positions_repo,
+            )
+        except AssetChangeBlockedError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        await db.commit()
+        await db.refresh(new)
+        return ActiveAssetResponse.model_validate(new)

@@ -392,3 +392,39 @@ class AppSession(Base):
     )
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+# =========================================================
+# Daily asset selection
+# =========================================================
+
+
+class ActiveAssetSelection(Base):
+    """Operator-selected asset for the trading day.
+
+    Versioned with the same append-only pattern as `config_policies`:
+    the row with `effective_to IS NULL` is the current selection. The
+    partial unique index `ix_active_asset_single_current` enforces at
+    most one current row.
+    """
+
+    __tablename__ = "active_asset_selections"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    effective_to: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    set_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_active_asset_single_current",
+            text("(1)"),
+            unique=True,
+            postgresql_where=text("effective_to IS NULL"),
+        ),
+    )

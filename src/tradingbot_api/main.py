@@ -23,6 +23,7 @@ from tradingbot.persistence.database import create_engine, create_session_factor
 from tradingbot.settings import Settings, get_settings
 from tradingbot_api.bootstrap import ensure_admin_user
 from tradingbot_api.routes import (
+    asset_router,
     auth_router,
     config_router,
     health_router,
@@ -77,6 +78,7 @@ def create_app(
     app.include_router(me_router)
     app.include_router(status_router)
     app.include_router(config_router)
+    app.include_router(asset_router)
     return app
 
 
