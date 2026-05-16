@@ -4,6 +4,7 @@
 when they need data or actions from Interactive Brokers.
 """
 
+from tradingbot.connector.account_state import AccountStateLogger
 from tradingbot.connector.ib_client import IBClient
 
-__all__ = ["IBClient"]
+__all__ = ["AccountStateLogger", "IBClient"]

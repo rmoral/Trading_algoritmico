@@ -11,7 +11,7 @@ import asyncio
 import signal
 import sys
 
-from tradingbot.connector import IBClient
+from tradingbot.connector import AccountStateLogger, IBClient
 from tradingbot.logging_setup import configure_logging, get_logger
 from tradingbot.monitoring import KillSwitch, TelegramBot, TelegramHandlers
 from tradingbot.monitoring.metrics import start_metrics_server
@@ -41,6 +41,7 @@ async def amain() -> int:
     pnl_repo = PnLRepository(session_factory)
 
     ib_client = IBClient(settings)
+    account_logger = AccountStateLogger(ib_client)
 
     telegram_bot: TelegramBot | None = None
     if settings.telegram_bot_token.get_secret_value():
@@ -61,6 +62,7 @@ async def amain() -> int:
         loop.add_signal_handler(sig, shutdown.set)
 
     ib_task = asyncio.create_task(ib_client.run(), name="ib_client")
+    account_task = asyncio.create_task(account_logger.run(), name="account_state_logger")
     tg_task: asyncio.Task[None] | None = None
     if telegram_bot is not None:
         tg_task = asyncio.create_task(telegram_bot.start(), name="telegram_bot")
@@ -69,10 +71,12 @@ async def amain() -> int:
     log.info("shutdown_signaled")
 
     ib_client.stop()
+    account_logger.stop()
     if telegram_bot is not None:
         await telegram_bot.stop()
 
     await ib_task
+    await account_task
     if tg_task is not None and not tg_task.done():
         await tg_task
 
