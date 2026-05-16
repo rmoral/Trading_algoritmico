@@ -29,6 +29,7 @@ dependencies = [
     "uvicorn[standard]>=0.27",
     # Auth
     "argon2-cffi>=23.1",
+    "cryptography>=42.0",
     "pyotp>=2.9",
     "itsdangerous>=2.1",
     # YAML for bootstrap defaults

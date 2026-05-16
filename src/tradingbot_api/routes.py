@@ -46,7 +46,17 @@ from tradingbot_api.schemas import (
     OpenPositionResponse,
     PnLResponse,
     SetActiveAssetRequest,
+    TOTPDisenrollRequest,
+    TOTPEnrollResponse,
+    TOTPVerifyRequest,
     UserResponse,
+)
+from tradingbot_api.totp import (
+    decrypt_totp_secret,
+    encrypt_totp_secret,
+    new_totp_secret,
+    provisioning_uri,
+    verify_totp,
 )
 
 health_router = APIRouter(tags=["health"])
@@ -92,6 +102,17 @@ async def login(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
         if not verify_password(body.password, user.password_hash):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
+
+        # Second factor: required iff the user has TOTP enrolled.
+        if user.totp_secret_encrypted:
+            if body.totp_code is None:
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "totp_required")
+            server_secret = settings.web_api_secret_key.get_secret_value()
+            secret = decrypt_totp_secret(
+                user.totp_secret_encrypted, server_secret=server_secret
+            )
+            if not verify_totp(secret, body.totp_code):
+                raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid credentials")
 
         user.last_login_at = datetime.now(UTC)
         client_host = request.client.host if request.client else None
@@ -147,6 +168,88 @@ async def logout(
 @me_router.get("", response_model=UserResponse)
 async def me(user: Annotated[User, Depends(get_current_user)]) -> User:
     return user
+
+
+# =========================================================
+# TOTP enrollment (second factor)
+# =========================================================
+
+
+@me_router.post("/totp/enroll", response_model=TOTPEnrollResponse)
+async def totp_enroll(
+    user: Annotated[User, Depends(get_current_user)],
+) -> TOTPEnrollResponse:
+    """Generate a fresh TOTP secret and return it + a provisioning URI.
+
+    The secret is NOT persisted yet. The client must immediately call
+    POST /api/me/totp/verify with the secret AND a valid code to
+    commit it.
+    """
+    if user.totp_secret_encrypted:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "totp already enrolled; disenroll first"
+        )
+    secret = new_totp_secret()
+    return TOTPEnrollResponse(
+        secret=secret,
+        provisioning_uri=provisioning_uri(secret, account_name=user.username),
+    )
+
+
+@me_router.post("/totp/verify", status_code=status.HTTP_204_NO_CONTENT)
+async def totp_verify(
+    body: TOTPVerifyRequest,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    session_factory: Annotated[
+        async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
+    ],
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Commit TOTP enrollment after confirming the user can compute codes."""
+    if user.totp_secret_encrypted:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "totp already enrolled; disenroll first"
+        )
+    if not verify_totp(body.secret, body.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid totp code")
+    server_secret = settings.web_api_secret_key.get_secret_value()
+    ciphertext = encrypt_totp_secret(body.secret, server_secret=server_secret)
+
+    async with session_factory() as db:
+        stored = await db.get(User, user.id)
+        if stored is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        stored.totp_secret_encrypted = ciphertext
+        await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@me_router.delete("/totp", status_code=status.HTTP_204_NO_CONTENT)
+async def totp_disenroll(
+    body: TOTPDisenrollRequest,
+    settings: Annotated[Settings, Depends(get_settings_dep)],
+    session_factory: Annotated[
+        async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
+    ],
+    user: Annotated[User, Depends(get_current_user)],
+) -> Response:
+    """Remove TOTP for the current user. Requires a valid current code."""
+    if not user.totp_secret_encrypted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "totp not enrolled")
+    server_secret = settings.web_api_secret_key.get_secret_value()
+    secret = decrypt_totp_secret(
+        user.totp_secret_encrypted, server_secret=server_secret
+    )
+    if not verify_totp(secret, body.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid totp code")
+
+    async with session_factory() as db:
+        stored = await db.get(User, user.id)
+        if stored is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+        stored.totp_secret_encrypted = None
+        await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # =========================================================

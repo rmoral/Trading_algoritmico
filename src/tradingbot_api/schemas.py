@@ -17,6 +17,21 @@ from pydantic import BaseModel, ConfigDict, Field
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=255)
+    totp_code: str | None = Field(default=None, pattern=r"^[0-9]{6}$")
+
+
+class TOTPEnrollResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+
+
+class TOTPVerifyRequest(BaseModel):
+    secret: str = Field(min_length=16, max_length=64)
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+class TOTPDisenrollRequest(BaseModel):
+    code: str = Field(pattern=r"^[0-9]{6}$")
 
 
 class UserResponse(BaseModel):
