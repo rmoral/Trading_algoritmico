@@ -27,12 +27,37 @@ cp .env.example .env
 # Generate WEB_API_SECRET_KEY with:
 #   python -c "import secrets; print(secrets.token_urlsafe(32))"
 
-# Start stateful infrastructure (Postgres + Redis + Grafana + Prometheus).
-# docker-compose.yml is added in a follow-up commit during Phase 1.
+# Start stateful infrastructure (Postgres + Redis + Grafana + Prometheus)
 docker compose up -d
+
+# Apply database schema (idempotent)
+uv run alembic upgrade head
+
+# Seed runtime configuration into `config_policies`
+uv run python scripts/seed_config.py
+
+# Run the bot (connects to paper IBKR, exposes /metrics on :9100,
+# answers Telegram commands)
+uv run tradingbot
 ```
 
-More steps will be documented here as Phase 1 progresses.
+The bot reads `.env` automatically. Live trading is gated by both
+`LIVE_TRADING=true` AND `IBKR_PORT=4001` — any mismatch is rejected
+at startup.
+
+## Useful commands
+
+```bash
+# Tests, lint, types
+uv run pytest tests/unit -q       # fast unit tests
+uv run pytest -m integration      # tests requiring postgres + paper IBKR
+uv run ruff check src tests       # lint
+uv run mypy src tests             # types
+
+# Schema management
+uv run alembic upgrade head       # apply migrations
+uv run alembic history            # show migration history
+```
 
 ## Safety
 
