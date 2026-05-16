@@ -1,0 +1,187 @@
+"""IBKR client wrapper with reconnect and heartbeat.
+
+Wraps `ib_insync.IB` with:
+- exponential-backoff connect loop (1 s, 2 s, ..., capped at 60 s),
+- a `run()` task that keeps the connection alive across gateway
+  restarts and emits a structured heartbeat log on a configurable
+  interval,
+- a Prometheus gauge `tradingbot_ib_connection_state` that reflects
+  connection state at any moment,
+- a thin `get_account_summary()` accessor.
+
+This module is the only place strategy/execution code is allowed to
+touch `ib_insync`. Everything else uses `IBClient`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any, Protocol, runtime_checkable
+
+from prometheus_client import Gauge
+
+from tradingbot.logging_setup import get_logger
+from tradingbot.settings import Settings
+
+INITIAL_BACKOFF_SECONDS: float = 1.0
+MAX_BACKOFF_SECONDS: float = 60.0
+DEFAULT_HEARTBEAT_SECONDS: float = 5.0
+DEFAULT_CONNECT_TIMEOUT_SECONDS: float = 10.0
+
+CONNECTION_STATE: Gauge = Gauge(
+    "tradingbot_ib_connection_state",
+    "1 if the IBKR gateway is currently connected, 0 otherwise.",
+)
+
+
+@runtime_checkable
+class IBLike(Protocol):
+    """Subset of `ib_insync.IB` we depend on, for testability."""
+
+    def isConnected(self) -> bool: ...
+
+    async def connectAsync(
+        self,
+        host: str,
+        port: int,
+        clientId: int,
+        timeout: float = ...,
+        readonly: bool = ...,
+        account: str = ...,
+    ) -> Any: ...
+
+    def disconnect(self) -> None: ...
+
+    def accountSummary(self, account: str = ...) -> list[Any]: ...
+
+
+class IBClient:
+    """High-level IBKR client.
+
+    Owns the connection, the reconnect loop, and the heartbeat task.
+    Inject a custom `ib` to substitute the underlying transport in
+    tests; defaults to a fresh `ib_insync.IB()`.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        ib: IBLike | None = None,
+        heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS,
+        connect_timeout_seconds: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._settings = settings
+        self._ib: IBLike = ib if ib is not None else _default_ib()
+        self._heartbeat_seconds = heartbeat_seconds
+        self._connect_timeout_seconds = connect_timeout_seconds
+        self._stop_event = asyncio.Event()
+        self._log = get_logger(__name__)
+        CONNECTION_STATE.set(0)
+
+    @property
+    def ib(self) -> IBLike:
+        """Underlying transport, exposed for advanced callers."""
+        return self._ib
+
+    def is_connected(self) -> bool:
+        return self._ib.isConnected()
+
+    async def connect(self) -> None:
+        """Connect to IB Gateway with exponential-backoff retries.
+
+        Returns once a connection is established or `stop()` has been
+        called.
+        """
+        backoff = INITIAL_BACKOFF_SECONDS
+        while not self._stop_event.is_set():
+            try:
+                await self._ib.connectAsync(
+                    self._settings.ibkr_host,
+                    self._settings.ibkr_port,
+                    clientId=self._settings.ibkr_client_id,
+                    timeout=self._connect_timeout_seconds,
+                )
+                CONNECTION_STATE.set(1)
+                self._log.info(
+                    "ib_connected",
+                    host=self._settings.ibkr_host,
+                    port=self._settings.ibkr_port,
+                    client_id=self._settings.ibkr_client_id,
+                    is_live=self._settings.is_live,
+                )
+                return
+            except (ConnectionRefusedError, TimeoutError, OSError) as exc:
+                CONNECTION_STATE.set(0)
+                self._log.warning(
+                    "ib_connect_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    backoff_seconds=backoff,
+                )
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=backoff)
+                    return
+                except TimeoutError:
+                    pass
+                backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+
+    def disconnect(self) -> None:
+        """Close the connection synchronously. Safe to call when not connected."""
+        if self._ib.isConnected():
+            self._ib.disconnect()
+        CONNECTION_STATE.set(0)
+
+    def stop(self) -> None:
+        """Signal `run()` and `connect()` to exit at the next checkpoint."""
+        self._stop_event.set()
+
+    async def run(self) -> None:
+        """Connect and keep the connection alive until `stop()` is called.
+
+        On disconnect, the connect loop restarts. On every heartbeat
+        interval while connected, emits a structured log line.
+        """
+        while not self._stop_event.is_set():
+            await self.connect()
+            if self._stop_event.is_set():
+                break
+            await self._heartbeat_until_disconnect()
+            CONNECTION_STATE.set(0)
+            if not self._stop_event.is_set():
+                self._log.warning("ib_disconnected_reconnecting")
+
+    async def _heartbeat_until_disconnect(self) -> None:
+        while self._ib.isConnected() and not self._stop_event.is_set():
+            self._log.info("ib_heartbeat", connected=True)
+            try:
+                await asyncio.wait_for(
+                    self._stop_event.wait(), timeout=self._heartbeat_seconds
+                )
+                return
+            except TimeoutError:
+                continue
+
+    def get_account_summary(self) -> dict[str, str]:
+        """Return the latest account summary as a dict of {tag: value}.
+
+        `ib_insync` keeps the values cached after `accountSummary` is
+        first called; this method returns whatever is currently
+        cached. Returns an empty dict if not yet populated.
+        """
+        if not self._ib.isConnected():
+            return {}
+        rows = self._ib.accountSummary()
+        return {row.tag: row.value for row in rows}
+
+
+def _default_ib() -> IBLike:
+    """Construct the real `ib_insync.IB` instance.
+
+    Isolated in a function so importing this module without
+    `ib_insync` available (e.g. in some test contexts) does not blow
+    up at import time.
+    """
+    from ib_insync import IB  # imported lazily
+
+    return IB()  # type: ignore[no-untyped-call]
