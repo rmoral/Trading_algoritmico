@@ -18,6 +18,7 @@ from tradingbot.logging_setup import configure_logging, get_logger
 from tradingbot.persistence.database import create_engine, create_session_factory
 from tradingbot.persistence.models import ConfigPolicy
 from tradingbot.settings import get_settings
+from tradingbot_api.config_schema import ConfigPolicyPayload
 
 DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "config" / "defaults.yaml"
 
@@ -31,10 +32,15 @@ async def seed() -> int:
         log.error("defaults_file_missing", path=str(DEFAULTS_PATH))
         return 1
 
-    payload = yaml.safe_load(DEFAULTS_PATH.read_text())
-    if not isinstance(payload, dict):
+    raw = yaml.safe_load(DEFAULTS_PATH.read_text())
+    if not isinstance(raw, dict):
         log.error("defaults_file_invalid", path=str(DEFAULTS_PATH))
         return 1
+
+    # Round-trip through the API's validator so seed_config can never
+    # publish a payload the web app would refuse.
+    payload = ConfigPolicyPayload.model_validate(raw)
+    serialized = payload.model_dump(mode="json")
 
     engine = create_engine(settings)
     factory = create_session_factory(engine)
@@ -53,7 +59,7 @@ async def seed() -> int:
                 version=1,
                 effective_from=now,
                 effective_to=None,
-                payload=payload,
+                payload=serialized,
                 created_by="seed",
                 created_at=now,
             )

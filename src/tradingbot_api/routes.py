@@ -26,8 +26,11 @@ from tradingbot_api.auth import (
     get_settings_dep,
     verify_password,
 )
+from tradingbot_api.config_schema import ConfigPolicyPayload
+from tradingbot_api.config_service import get_current_policy, update_policy
 from tradingbot_api.schemas import (
     BotStatusResponse,
+    ConfigPolicyResponse,
     HealthResponse,
     LoginRequest,
     OpenPositionResponse,
@@ -39,6 +42,7 @@ health_router = APIRouter(tags=["health"])
 auth_router = APIRouter(prefix="/api/auth", tags=["auth"])
 me_router = APIRouter(prefix="/api/me", tags=["me"])
 status_router = APIRouter(prefix="/api/status", tags=["status"])
+config_router = APIRouter(prefix="/api/config", tags=["config"])
 
 
 # =========================================================
@@ -163,3 +167,39 @@ async def bot_status(
         ),
         today_pnl=PnLResponse.model_validate(pnl_row) if pnl_row else None,
     )
+
+
+# =========================================================
+# Runtime configuration (config_policies)
+# =========================================================
+
+
+@config_router.get("", response_model=ConfigPolicyResponse)
+async def read_config(
+    session_factory: Annotated[
+        async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
+    ],
+    _user: Annotated[User, Depends(get_current_user)],
+) -> ConfigPolicyResponse:
+    async with session_factory() as db:
+        current = await get_current_policy(db)
+        if current is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "no active config policy"
+            )
+        return ConfigPolicyResponse.model_validate(current)
+
+
+@config_router.put("", response_model=ConfigPolicyResponse)
+async def write_config(
+    body: ConfigPolicyPayload,
+    session_factory: Annotated[
+        async_sessionmaker[_AsyncSession], Depends(get_session_factory_dep)
+    ],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ConfigPolicyResponse:
+    async with session_factory() as db:
+        new_policy = await update_policy(db, payload=body, actor=user.username)
+        await db.commit()
+        await db.refresh(new_policy)
+        return ConfigPolicyResponse.model_validate(new_policy)

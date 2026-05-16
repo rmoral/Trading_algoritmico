@@ -24,6 +24,7 @@ from tradingbot.settings import Settings, get_settings
 from tradingbot_api.bootstrap import ensure_admin_user
 from tradingbot_api.routes import (
     auth_router,
+    config_router,
     health_router,
     me_router,
     status_router,
@@ -75,6 +76,7 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(me_router)
     app.include_router(status_router)
+    app.include_router(config_router)
     return app
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -64,3 +65,17 @@ class BotStatusResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = "ok"
+
+
+class ConfigPolicyResponse(BaseModel):
+    """Wire format for a single policy version."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    version: int
+    effective_from: datetime
+    effective_to: datetime | None
+    payload: dict[str, Any]
+    created_by: str
+    created_at: datetime
