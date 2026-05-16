@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: tradingbot-dev
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: tradingbot
+    static_configs:
+      # The bot runs on the host and exposes /metrics on port 9100.
+      # `host.docker.internal` resolves to the host gateway thanks to
+      # `extra_hosts` in docker-compose.yml.
+      - targets: ["host.docker.internal:9100"]
