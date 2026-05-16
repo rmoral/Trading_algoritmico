@@ -1,62 +1,20 @@
-// Wire types mirror the pydantic schemas in
-// src/tradingbot_api/schemas.py. Kept hand-written until we wire up
-// openapi-typescript codegen.
+// Thin aliases over the auto-generated OpenAPI schema in
+// `schema.gen.ts`. The generator is invoked by `npm run gen:api`
+// (which itself calls `scripts/export_openapi.py` to refresh
+// `openapi.json` from the FastAPI app). Hand-edit this file ONLY to
+// add new aliases or compositions; the underlying types live in
+// `schema.gen.ts` and must not be touched by hand.
 
-export type ConnectionState = "connected" | "disconnected" | "unknown";
+import type { components } from "./schema.gen";
 
-export interface UserResponse {
-  id: string;
-  username: string;
-  is_active: boolean;
-  last_login_at: string | null;
-  totp_enrolled: boolean;
-}
+type Schemas = components["schemas"];
 
-export interface OpenPositionResponse {
-  symbol: string;
-  side: string;
-  qty: string;
-  avg_entry_price: string;
-  state: string;
-}
+export type UserResponse = Schemas["UserResponse"];
+export type OpenPositionResponse = Schemas["OpenPositionResponse"];
+export type PnLResponse = Schemas["PnLResponse"];
+export type BotStatusResponse = Schemas["BotStatusResponse"];
+export type ConfigPolicyResponse = Schemas["ConfigPolicyResponse"];
+export type ActiveAssetResponse = Schemas["ActiveAssetResponse"];
+export type TOTPEnrollResponse = Schemas["TOTPEnrollResponse"];
 
-export interface PnLResponse {
-  date: string;
-  gross_pnl: string;
-  commissions: string;
-  net_pnl: string;
-  n_trades: number;
-  n_wins: number;
-  n_losses: number;
-}
-
-export interface BotStatusResponse {
-  connection_state: ConnectionState;
-  kill_switch_tripped: boolean;
-  kill_switch_reason: string | null;
-  open_position: OpenPositionResponse | null;
-  today_pnl: PnLResponse | null;
-}
-
-export interface ConfigPolicyResponse {
-  id: string;
-  version: number;
-  effective_from: string;
-  effective_to: string | null;
-  payload: Record<string, unknown>;
-  created_by: string;
-  created_at: string;
-}
-
-export interface ActiveAssetResponse {
-  id: string;
-  symbol: string;
-  effective_from: string;
-  effective_to: string | null;
-  set_by: string;
-}
-
-export interface TOTPEnrollResponse {
-  secret: string;
-  provisioning_uri: string;
-}
+export type ConnectionState = BotStatusResponse["connection_state"];

@@ -40,6 +40,7 @@ from tradingbot_api.schemas import (
     ActiveAssetResponse,
     BotStatusResponse,
     ConfigPolicyResponse,
+    ConnectionState,
     HealthResponse,
     KillRequest,
     LoginRequest,
@@ -288,6 +289,7 @@ async def bot_status(
     pnl_row = await pnl_repo.get_pnl_for_date(datetime.now(UTC).date())
 
     connection_raw = await state_reader.get_connection()
+    connection_state: ConnectionState
     if connection_raw is None:
         connection_state = "unknown"
     elif connection_raw:

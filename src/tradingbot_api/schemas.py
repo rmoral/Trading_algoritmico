@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -64,10 +64,13 @@ class PnLResponse(BaseModel):
     n_losses: int
 
 
+ConnectionState = Literal["connected", "disconnected", "unknown"]
+
+
 class BotStatusResponse(BaseModel):
     """High-level snapshot for the dashboard poll endpoint."""
 
-    connection_state: str  # "connected" | "disconnected" | "unknown"
+    connection_state: ConnectionState
     kill_switch_tripped: bool
     kill_switch_reason: str | None
     open_position: OpenPositionResponse | None

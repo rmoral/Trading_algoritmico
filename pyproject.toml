@@ -83,6 +83,8 @@ select = [
 # These modules mirror ib_insync's camelCase API surface.
 "src/tradingbot/connector/ib_client.py" = ["N802", "N803"]
 "tests/unit/test_ib_client.py" = ["N802", "N803"]
+# Scripts are run interactively by the operator; print is fine there.
+"scripts/*.py" = ["T201"]
 
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI uses Depends/Cookie/Query/Body as call-in-default; allowed.
