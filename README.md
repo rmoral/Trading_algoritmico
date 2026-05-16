@@ -76,3 +76,6 @@ Live trading is disabled by default. Enabling it requires both `LIVE_TRADING=tru
 
 - `CLAUDE.md` — operational contract, conventions, principles, current state.
 - `PRD.md` — product requirements, vision, functional/non-functional spec.
+- `docs/smoke-test.md` — manual end-to-end checklist to run before
+  merging anything that touches the live execution path.
+- `docs/production.md` — VPS + Caddy + Cloudflare deployment runbook.
