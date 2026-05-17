@@ -114,7 +114,11 @@ class OrderRouter:
         self._log = get_logger(__name__)
 
     async def submit_signal(
-        self, signal: TradingSignal, ctx: RiskContext
+        self,
+        signal: TradingSignal,
+        ctx: RiskContext,
+        *,
+        signal_id: UUID | None = None,
     ) -> RouterResult:
         """Approve the signal, build the bracket, submit it.
 
@@ -126,6 +130,11 @@ class OrderRouter:
 
         Refusals return a `RouterResult(approved=False, decision=..)`
         with `bracket=None`. No partial state is left in the DB.
+
+        `signal_id` wins over the constructor-provided lookup when
+        both are present. Engines that have just persisted a Signal
+        row pass it directly; the lookup is the fallback for callers
+        that prefer the indirection.
         """
         bracket = build_bracket(signal)
         request = self._signal_to_request(signal, bracket)
@@ -157,12 +166,10 @@ class OrderRouter:
             )
             raise OrderSubmissionError(str(exc)) from exc
 
-        signal_id = (
-            await self._lookup_signal_id(signal)
-            if self._lookup_signal_id is not None
-            else None
-        )
-        await self._persist_bracket(signal, bracket, submitted, signal_id)
+        resolved_signal_id = signal_id
+        if resolved_signal_id is None and self._lookup_signal_id is not None:
+            resolved_signal_id = await self._lookup_signal_id(signal)
+        await self._persist_bracket(signal, bracket, submitted, resolved_signal_id)
         self._log.info(
             "order_router_bracket_submitted",
             symbol=signal.symbol,

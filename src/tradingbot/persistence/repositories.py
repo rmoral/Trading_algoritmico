@@ -12,7 +12,9 @@ is invoked against a running Postgres.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -20,8 +22,21 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tradingbot.data.bars import CompletedBar
 from tradingbot.data.sr_detector import DetectedLevel, components_to_jsonb
-from tradingbot.persistence.enums import BarResolution, PositionState
-from tradingbot.persistence.models import Bar, PnLDaily, Position, SRLevel
+from tradingbot.persistence.enums import (
+    BarResolution,
+    OrderSide,
+    PositionSide,
+    PositionState,
+)
+from tradingbot.persistence.models import (
+    ActiveAssetSelection,
+    Bar,
+    PnLDaily,
+    Position,
+    Signal,
+    SRLevel,
+)
+from tradingbot.strategy.types import TradingSignal
 
 
 class PositionsRepository:
@@ -176,3 +191,84 @@ class SRLevelRepository:
                 .order_by(SRLevel.strength.desc())
             )
             return list(result.scalars().all())
+
+
+class ActiveAssetRepository:
+    """Read access to the currently selected trading asset.
+
+    The web app writes to `active_asset_selections` through
+    `tradingbot_api.asset_service.set_active_asset`. The strategy
+    engine reads here.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = session_factory
+
+    async def get_active_symbol(self) -> str | None:
+        async with self._sessions() as session:
+            current = (
+                await session.execute(
+                    select(ActiveAssetSelection).where(
+                        ActiveAssetSelection.effective_to.is_(None)
+                    )
+                )
+            ).scalar_one_or_none()
+            return current.symbol if current is not None else None
+
+
+def _side_to_position_side(side: OrderSide) -> str:
+    """`OrderSide.BUY` -> "LONG"; `OrderSide.SELL` -> "SHORT".
+
+    The `signals.side` column uses LONG/SHORT (PositionSide values).
+    """
+    return PositionSide.LONG.value if side == OrderSide.BUY else PositionSide.SHORT.value
+
+
+class SignalRepository:
+    """Insert `signals` rows from in-memory `TradingSignal` instances."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = session_factory
+
+    async def insert(
+        self,
+        signal: TradingSignal,
+        *,
+        ts: datetime,
+        strategy: str = "discovery_sr",
+        extra: dict[str, Any] | None = None,
+    ) -> UUID:
+        """Persist the signal; return the new row's id.
+
+        The engine calls this before handing the signal to the
+        `OrderRouter`, then passes the returned id so the
+        `orders` row joins back to `signals`.
+        """
+        payload: dict[str, Any] = {
+            "is_partial": signal.is_partial,
+            "expected_profit_usd": str(signal.expected_profit_usd),
+            "expected_commission_usd": str(signal.expected_commission_usd),
+            "sr_level_strength": str(signal.sr_level_strength),
+        }
+        if extra:
+            payload.update(extra)
+        new_id = uuid4()
+        async with self._sessions() as session:
+            session.add(
+                Signal(
+                    id=new_id,
+                    ts=ts,
+                    strategy=strategy,
+                    symbol=signal.symbol,
+                    side=_side_to_position_side(signal.side),
+                    sr_level_id=signal.sr_level_id,
+                    score=signal.sr_level_strength,
+                    suggested_qty=signal.qty,
+                    stop_loss=signal.stop_loss_price,
+                    take_profit=signal.take_profit_price,
+                    r_multiple=signal.r_multiple,
+                    extra=payload,
+                )
+            )
+            await session.commit()
+        return new_id
