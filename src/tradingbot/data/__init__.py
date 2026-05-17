@@ -7,6 +7,13 @@ for downstream consumers (indicators, S/R detector, strategy).
 """
 
 from tradingbot.data.bars import BarSink, BarSource, CompletedBar
+from tradingbot.data.indicators import (
+    VolumeBucket,
+    atr,
+    ema,
+    session_vwap,
+    volume_profile,
+)
 from tradingbot.data.market_data import MarketDataService
 
 __all__ = [
@@ -14,4 +21,9 @@ __all__ = [
     "BarSource",
     "CompletedBar",
     "MarketDataService",
+    "VolumeBucket",
+    "atr",
+    "ema",
+    "session_vwap",
+    "volume_profile",
 ]
