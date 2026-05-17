@@ -14,13 +14,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from tradingbot.data import CompletedBar
-from tradingbot.persistence.enums import BarResolution, PositionSide, PositionState
-from tradingbot.persistence.models import Bar, PnLDaily, Position
+from tradingbot.data import CompletedBar, DetectedLevel
+from tradingbot.data.sr_strength import StrengthComponents
+from tradingbot.persistence.enums import BarResolution, PositionSide, PositionState, SRKind
+from tradingbot.persistence.models import Bar, PnLDaily, Position, SRLevel
 from tradingbot.persistence.repositories import (
     BarRepository,
     PnLRepository,
     PositionsRepository,
+    SRLevelRepository,
 )
 
 pytestmark = pytest.mark.integration
@@ -211,3 +213,140 @@ class TestBarRepository:
         # The three most recent in chronological order.
         assert latest[0].ts.minute == 37
         assert latest[-1].ts.minute == 39
+
+
+def _detected(
+    *,
+    symbol: str = "AAPL",
+    price: str = "150.00",
+    kind: SRKind = SRKind.RESISTANCE,
+    strength: str = "75.0",
+    detected_at: datetime | None = None,
+) -> DetectedLevel:
+    return DetectedLevel(
+        symbol=symbol,
+        kind=kind,
+        price=Decimal(price),
+        strength=Decimal(strength),
+        components=StrengthComponents(
+            clean_touches=Decimal("100"),
+            volume_at_price=Decimal("60"),
+            ma_confluence=Decimal("75"),
+            persistence=Decimal("50"),
+            rejection_quality=Decimal("40"),
+        ),
+        detected_at=detected_at or datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
+    )
+
+
+class TestSRLevelRepository:
+    async def test_first_upsert_inserts_row(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        repo = SRLevelRepository(session_factory)
+        await repo.upsert_level(_detected(price="150.00", strength="75.0"))
+
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SRLevel).where(SRLevel.symbol == "AAPL")
+                )
+            ).scalars().all()
+            assert len(rows) == 1
+            row = rows[0]
+            assert row.price == Decimal("150.00")
+            assert row.strength == Decimal("75.0")
+            assert row.kind == SRKind.RESISTANCE.value
+            assert row.ts_first_detected == row.last_update_ts
+            assert row.broken_at is None
+            assert row.components["clean_touches"] == "100"
+
+    async def test_second_upsert_updates_strength_and_last_update(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        repo = SRLevelRepository(session_factory)
+        t1 = datetime(2026, 5, 16, 14, 30, tzinfo=UTC)
+        t2 = datetime(2026, 5, 16, 14, 45, tzinfo=UTC)
+
+        await repo.upsert_level(
+            _detected(price="150.00", strength="70.0", detected_at=t1)
+        )
+        await repo.upsert_level(
+            _detected(price="150.00", strength="85.0", detected_at=t2)
+        )
+
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SRLevel).where(SRLevel.symbol == "AAPL")
+                )
+            ).scalars().all()
+            assert len(rows) == 1  # SAME level: re-upsert updates, not insert
+            row = rows[0]
+            assert row.strength == Decimal("85.0")
+            assert row.ts_first_detected == t1  # never moves
+            assert row.last_update_ts == t2  # latest detection
+
+    async def test_different_prices_are_different_rows(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        repo = SRLevelRepository(session_factory)
+        await repo.upsert_level(_detected(price="150.00"))
+        await repo.upsert_level(_detected(price="155.00"))
+
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SRLevel).where(SRLevel.symbol == "AAPL")
+                )
+            ).scalars().all()
+            assert {r.price for r in rows} == {Decimal("150.00"), Decimal("155.00")}
+
+    async def test_different_kinds_are_different_rows(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Same symbol + price but kind differs -> two rows."""
+        repo = SRLevelRepository(session_factory)
+        await repo.upsert_level(_detected(price="150.00", kind=SRKind.RESISTANCE))
+        await repo.upsert_level(_detected(price="150.00", kind=SRKind.SUPPORT))
+
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SRLevel).where(SRLevel.symbol == "AAPL")
+                )
+            ).scalars().all()
+            assert len(rows) == 2
+            assert {r.kind for r in rows} == {SRKind.RESISTANCE.value, SRKind.SUPPORT.value}
+
+    async def test_list_active_orders_by_strength_desc(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        repo = SRLevelRepository(session_factory)
+        await repo.upsert_level(_detected(price="150.00", strength="40.0"))
+        await repo.upsert_level(_detected(price="155.00", strength="80.0"))
+        await repo.upsert_level(_detected(price="160.00", strength="60.0"))
+
+        active = await repo.list_active("AAPL")
+        assert [r.price for r in active] == [
+            Decimal("155.00"),
+            Decimal("160.00"),
+            Decimal("150.00"),
+        ]
+
+    async def test_list_active_skips_broken(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        repo = SRLevelRepository(session_factory)
+        await repo.upsert_level(_detected(price="150.00"))
+
+        async with session_factory() as session:
+            row = (
+                await session.execute(
+                    select(SRLevel).where(SRLevel.symbol == "AAPL")
+                )
+            ).scalar_one()
+            row.broken_at = datetime(2026, 5, 16, 15, 0, tzinfo=UTC)
+            await session.commit()
+
+        assert await repo.list_active("AAPL") == []

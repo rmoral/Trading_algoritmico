@@ -19,8 +19,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tradingbot.data.bars import CompletedBar
+from tradingbot.data.sr_detector import DetectedLevel, components_to_jsonb
 from tradingbot.persistence.enums import BarResolution, PositionState
-from tradingbot.persistence.models import Bar, PnLDaily, Position
+from tradingbot.persistence.models import Bar, PnLDaily, Position, SRLevel
 
 
 class PositionsRepository:
@@ -118,3 +119,60 @@ class BarRepository:
             rows = list(result.scalars().all())
             rows.reverse()  # chronological order for downstream consumers
             return rows
+
+
+class SRLevelRepository:
+    """Read/write access to `sr_levels`.
+
+    Implements `tradingbot.data.sr_detector.SRLevelSink`.
+
+    Identity for upsert is `(symbol, kind, price)`. The same physical
+    level re-detected across passes updates `strength`, `components`
+    and `last_update_ts`. A new (symbol, kind, price) triple inserts
+    a row with `ts_first_detected = last_update_ts = detected_at`.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = session_factory
+
+    async def upsert_level(self, level: DetectedLevel) -> None:
+        components = components_to_jsonb(level.components)
+        async with self._sessions() as session:
+            existing = (
+                await session.execute(
+                    select(SRLevel).where(
+                        SRLevel.symbol == level.symbol,
+                        SRLevel.kind == level.kind.value,
+                        SRLevel.price == level.price,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    SRLevel(
+                        ts_first_detected=level.detected_at,
+                        symbol=level.symbol,
+                        price=level.price,
+                        kind=level.kind.value,
+                        strength=level.strength,
+                        components=components,
+                        last_update_ts=level.detected_at,
+                    )
+                )
+            else:
+                existing.strength = level.strength
+                existing.components = components
+                existing.last_update_ts = level.detected_at
+                # broken_at left untouched: once a level is broken the
+                # mark stays until the strategy decides what to do.
+            await session.commit()
+
+    async def list_active(self, symbol: str) -> list[SRLevel]:
+        """Return non-broken levels for `symbol`, strongest first."""
+        async with self._sessions() as session:
+            result = await session.execute(
+                select(SRLevel)
+                .where(SRLevel.symbol == symbol, SRLevel.broken_at.is_(None))
+                .order_by(SRLevel.strength.desc())
+            )
+            return list(result.scalars().all())

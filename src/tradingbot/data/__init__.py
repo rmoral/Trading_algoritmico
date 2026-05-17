@@ -16,6 +16,13 @@ from tradingbot.data.indicators import (
 )
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.pivots import ConfirmedLevel, Pivot, cross_confirm, find_pivots
+from tradingbot.data.sr_detector import (
+    DetectedLevel,
+    SRDetector,
+    SRDetectorConfig,
+    SRLevelSink,
+    components_to_jsonb,
+)
 from tradingbot.data.sr_strength import (
     DEFAULT_WEIGHTS,
     IndicatorSnapshot,
@@ -35,15 +42,20 @@ __all__ = [
     "BarSource",
     "CompletedBar",
     "ConfirmedLevel",
+    "DetectedLevel",
     "IndicatorSnapshot",
     "MarketDataService",
     "Pivot",
+    "SRDetector",
+    "SRDetectorConfig",
+    "SRLevelSink",
     "StrengthComponents",
     "StrengthWeights",
     "VolumeBucket",
     "atr",
     "clean_touches_score",
     "compute_strength",
+    "components_to_jsonb",
     "cross_confirm",
     "ema",
     "find_pivots",
