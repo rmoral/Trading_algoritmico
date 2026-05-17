@@ -231,9 +231,27 @@ Transitions are durable: written to Postgres BEFORE the action that triggers the
 
 ### Discovery strategy (CERRADA state)
 
-Runs continuously while CERRADA, on a **rolling 5-minute window** evaluated tick-by-tick.
+Runs continuously while CERRADA. Operates on a **60-minute lookback
+window** (configurable: `sr_lookback_minutes = 60`).
 
-**S/R detection.** For each candidate price level `P` (local extrema from 1m and 5m bars within a configurable lookback — default: premarket + last 2 h of session), compute a **strength score 0–100**:
+**S/R detection.** Pivot extrema are computed independently on the
+**5-minute** and **15-minute** bar series. A candidate level is kept
+only when a 15-minute pivot is **confirmed** by a 5-minute pivot at
+the same price (within `sr_level_tolerance_pct`). The 1-minute
+series is NOT used for pivot detection — its job is to drive
+trend-change signals (breakout vs rejection) in real time once a
+level has been identified.
+
+Indicators (session VWAP, EMA20, EMA50, EMA200, ATR(14)) are
+computed on a longer rolling history of 1-minute bars
+(`indicator_history_minutes = 240` at startup, then `keepUpToDate`
+updates) so EMA200 has enough warm-up. The session VWAP reuses
+IBKR's per-bar WAP field directly via `Σ(wap_i · vol_i) / Σ(vol_i)`
+— IBKR exposes WAP per bar but no session-cumulative VWAP, EMA, or
+ATR via the API (those are computed locally in
+`src/tradingbot/data/indicators.py`).
+
+For each kept candidate level `P`, compute a **strength score 0–100**:
 
 | Component | Weight | Definition |
 |---|---:|---|
@@ -304,7 +322,14 @@ sr_strong_threshold:              70
 sr_weak_threshold:                40
 sr_partial_entry_pct:             50       # % of position on weak-signal first entry
 sr_level_tolerance_pct:           0.05     # +/- band around a level for touch detection
-sr_lookback_minutes:              120      # how far back to scan for level candidates
+sr_lookback_minutes:              60       # window for pivot detection on 5m + 15m
+sr_pivot_window:                  1        # ± bars for local-extremum detection
+
+# Trend-change signals (CERRADA, 1-minute series)
+trend_change_lookback_minutes:    60       # 1m bars used to drive entries on a confirmed level
+
+# Indicator warm-up (1-minute series)
+indicator_history_minutes:        240      # rolling history retained for EMA200 / ATR
 
 # Daily caps (circuit breaker triggers)
 max_daily_loss_usd:               2250     # 1.5% of account → trip

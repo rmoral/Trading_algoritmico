@@ -21,7 +21,14 @@ sr_strong_threshold:              70
 sr_weak_threshold:                40
 sr_partial_entry_pct:             50        # % of position on weak-signal first entry
 sr_level_tolerance_pct:           0.05      # +/- band around a level for touch detection
-sr_lookback_minutes:              120       # how far back to scan for level candidates
+sr_lookback_minutes:              60        # window for pivot detection on 5m + 15m
+sr_pivot_window:                  1         # +/- bars for local-extremum detection
+
+# Trend-change signals (1m series)
+trend_change_lookback_minutes:    60        # 1m bars used for trend-change after a level is identified
+
+# Indicator warm-up (1m series)
+indicator_history_minutes:        240       # 1m bars retained for EMA200 / ATR
 
 # S/R strength weights (must sum to 1.0)
 sr_strength_weights:

@@ -91,7 +91,12 @@ class ConfigPolicyPayload(BaseModel):
     sr_weak_threshold: Annotated[int, Field(ge=0, le=100)]
     sr_partial_entry_pct: Annotated[int, Field(gt=0, lt=100)]
     sr_level_tolerance_pct: Annotated[Decimal, Field(gt=0, le=1)]
-    sr_lookback_minutes: Annotated[int, Field(gt=0)]
+    sr_lookback_minutes: Annotated[int, Field(ge=30, le=720)]
+    sr_pivot_window: Annotated[int, Field(ge=1, le=5)]
+
+    # Trend-change signals (1m bars) and indicator warm-up history.
+    trend_change_lookback_minutes: Annotated[int, Field(ge=10, le=480)]
+    indicator_history_minutes: Annotated[int, Field(ge=60, le=720)]
 
     sr_strength_weights: SRStrengthWeights
 
@@ -161,5 +166,16 @@ class ConfigPolicyPayload(BaseModel):
                 "force_flatten_before_close_minutes must be < "
                 "no_new_entries_before_close_minutes (forced flatten happens "
                 "AFTER we stop scanning for entries)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _indicator_history_covers_sr_lookback(self) -> Self:
+        if self.indicator_history_minutes < self.sr_lookback_minutes:
+            raise ValueError(
+                f"indicator_history_minutes ({self.indicator_history_minutes}) "
+                f"must be >= sr_lookback_minutes ({self.sr_lookback_minutes}); "
+                "indicators are computed on the same or a longer window than "
+                "the S/R detector"
             )
         return self

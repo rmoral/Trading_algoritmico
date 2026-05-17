@@ -869,8 +869,27 @@
           },
           "sr_lookback_minutes": {
             "type": "integer",
-            "exclusiveMinimum": 0.0,
+            "maximum": 720.0,
+            "minimum": 30.0,
             "title": "Sr Lookback Minutes"
+          },
+          "sr_pivot_window": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Sr Pivot Window"
+          },
+          "trend_change_lookback_minutes": {
+            "type": "integer",
+            "maximum": 480.0,
+            "minimum": 10.0,
+            "title": "Trend Change Lookback Minutes"
+          },
+          "indicator_history_minutes": {
+            "type": "integer",
+            "maximum": 720.0,
+            "minimum": 60.0,
+            "title": "Indicator History Minutes"
           },
           "sr_strength_weights": {
             "$ref": "#/components/schemas/SRStrengthWeights"
@@ -982,6 +1001,9 @@
           "sr_partial_entry_pct",
           "sr_level_tolerance_pct",
           "sr_lookback_minutes",
+          "sr_pivot_window",
+          "trend_change_lookback_minutes",
+          "indicator_history_minutes",
           "sr_strength_weights",
           "max_daily_loss_usd",
           "max_trades_per_day",

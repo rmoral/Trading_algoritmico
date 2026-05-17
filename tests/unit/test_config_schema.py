@@ -35,7 +35,10 @@ def _baseline() -> dict[str, object]:
         "sr_weak_threshold": 40,
         "sr_partial_entry_pct": 50,
         "sr_level_tolerance_pct": "0.05",
-        "sr_lookback_minutes": 120,
+        "sr_lookback_minutes": 60,
+        "sr_pivot_window": 1,
+        "trend_change_lookback_minutes": 60,
+        "indicator_history_minutes": 240,
         "sr_strength_weights": {
             "clean_touches": "0.35",
             "volume_at_price": "0.30",
@@ -158,6 +161,21 @@ def test_unknown_field_rejected() -> None:
 def test_missing_field_rejected() -> None:
     p = _baseline()
     del p["max_daily_loss_usd"]
+    with pytest.raises(ValidationError):
+        ConfigPolicyPayload.model_validate(p)
+
+
+def test_indicator_history_must_cover_sr_lookback() -> None:
+    p = _baseline()
+    p["sr_lookback_minutes"] = 240
+    p["indicator_history_minutes"] = 60  # < lookback -> rejected
+    with pytest.raises(ValidationError):
+        ConfigPolicyPayload.model_validate(p)
+
+
+def test_sr_pivot_window_floor() -> None:
+    p = _baseline()
+    p["sr_pivot_window"] = 0  # must be >= 1 (you need at least 1 neighbor)
     with pytest.raises(ValidationError):
         ConfigPolicyPayload.model_validate(p)
 

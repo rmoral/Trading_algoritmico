@@ -42,7 +42,10 @@ def _baseline_payload() -> dict[str, Any]:
         "sr_weak_threshold": 40,
         "sr_partial_entry_pct": 50,
         "sr_level_tolerance_pct": "0.05",
-        "sr_lookback_minutes": 120,
+        "sr_lookback_minutes": 60,
+        "sr_pivot_window": 1,
+        "trend_change_lookback_minutes": 60,
+        "indicator_history_minutes": 240,
         "sr_strength_weights": {
             "clean_touches": "0.35",
             "volume_at_price": "0.30",

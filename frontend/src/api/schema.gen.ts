@@ -289,6 +289,12 @@ export interface components {
             sr_level_tolerance_pct: number | string;
             /** Sr Lookback Minutes */
             sr_lookback_minutes: number;
+            /** Sr Pivot Window */
+            sr_pivot_window: number;
+            /** Trend Change Lookback Minutes */
+            trend_change_lookback_minutes: number;
+            /** Indicator History Minutes */
+            indicator_history_minutes: number;
             sr_strength_weights: components["schemas"]["SRStrengthWeights"];
             /** Max Daily Loss Usd */
             max_daily_loss_usd: number | string;
