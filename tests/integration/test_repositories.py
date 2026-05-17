@@ -11,11 +11,17 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from tradingbot.persistence.enums import PositionSide, PositionState
-from tradingbot.persistence.models import PnLDaily, Position
-from tradingbot.persistence.repositories import PnLRepository, PositionsRepository
+from tradingbot.data import CompletedBar
+from tradingbot.persistence.enums import BarResolution, PositionSide, PositionState
+from tradingbot.persistence.models import Bar, PnLDaily, Position
+from tradingbot.persistence.repositories import (
+    BarRepository,
+    PnLRepository,
+    PositionsRepository,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -120,3 +126,88 @@ class TestPnLRepository:
         assert row is not None
         assert row.net_pnl == Decimal("437.50")
         assert row.n_wins == 5
+
+
+def _bar(ts: datetime, *, close: str = "100.00") -> CompletedBar:
+    return CompletedBar(
+        symbol="AAPL",
+        resolution=BarResolution.M1,
+        ts=ts,
+        open=Decimal("99.5"),
+        high=Decimal("100.5"),
+        low=Decimal("99.0"),
+        close=Decimal(close),
+        volume=Decimal("1000"),
+        wap=Decimal("99.8"),
+        count=42,
+    )
+
+
+class TestBarRepository:
+    async def test_insert_then_read_back(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        ts = datetime(2026, 5, 16, 14, 30, tzinfo=UTC)
+        repo = BarRepository(session_factory)
+        await repo.insert_bar(_bar(ts, close="100.5"))
+
+        async with session_factory() as session:
+            row = (
+                await session.execute(
+                    select(Bar).where(
+                        Bar.symbol == "AAPL",
+                        Bar.resolution == BarResolution.M1.value,
+                    )
+                )
+            ).scalar_one()
+            assert row.ts == ts
+            assert row.close == Decimal("100.5")
+
+    async def test_insert_is_upsert_on_pk_collision(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Streaming the same bar twice updates instead of erroring."""
+        ts = datetime(2026, 5, 16, 14, 30, tzinfo=UTC)
+        repo = BarRepository(session_factory)
+        await repo.insert_bar(_bar(ts, close="100.0"))
+        await repo.insert_bar(_bar(ts, close="101.5"))
+
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(Bar).where(Bar.symbol == "AAPL")
+                )
+            ).scalars().all()
+            assert len(rows) == 1
+            assert rows[0].close == Decimal("101.5")
+
+    async def test_get_latest_bars_returns_chronological(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        base = datetime(2026, 5, 16, 14, 30, tzinfo=UTC)
+        repo = BarRepository(session_factory)
+        # Insert out of order on purpose.
+        await repo.insert_bar(
+            _bar(base.replace(minute=32), close="103.0")
+        )
+        await repo.insert_bar(_bar(base, close="100.0"))
+        await repo.insert_bar(
+            _bar(base.replace(minute=31), close="101.0")
+        )
+
+        latest = await repo.get_latest_bars("AAPL", BarResolution.M1, 5)
+        assert [str(b.close) for b in latest] == ["100.0", "101.0", "103.0"]
+
+    async def test_get_latest_bars_caps_n(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        base = datetime(2026, 5, 16, 14, 30, tzinfo=UTC)
+        repo = BarRepository(session_factory)
+        for i in range(10):
+            await repo.insert_bar(_bar(base.replace(minute=30 + i)))
+
+        latest = await repo.get_latest_bars("AAPL", BarResolution.M1, 3)
+        assert len(latest) == 3
+        # The three most recent in chronological order.
+        assert latest[0].ts.minute == 37
+        assert latest[-1].ts.minute == 39

@@ -43,6 +43,7 @@ _TRUNCATE_TARGETS: tuple[str, ...] = (
     "signals",
     "positions",
     "sr_levels",
+    "bars",
     "pnl_daily",
     "risk_events",
     "reconciliation_log",
