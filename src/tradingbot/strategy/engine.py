@@ -24,6 +24,7 @@ next tick re-reads the world and resumes.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,6 +47,8 @@ from tradingbot.strategy.discovery import DiscoveryConfig, evaluate_entry
 from tradingbot.strategy.types import TradingSignal
 
 Clock = Callable[[], datetime]
+
+DEFAULT_TICK_INTERVAL_SECONDS: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,8 @@ class RiskContextBuilder:
 class StrategyEngine:
     """Owns the discovery tick. The management tick comes in a follow-up."""
 
+    _stop: asyncio.Event
+
     def __init__(
         self,
         *,
@@ -149,7 +154,42 @@ class StrategyEngine:
         self._risk_context = risk_context
         self._config = config
         self._clock = clock
+        self._stop = asyncio.Event()
         self._log = get_logger(__name__)
+
+    def stop(self) -> None:
+        """Ask `run()` to exit at the next interval boundary."""
+        self._stop.set()
+
+    async def run(
+        self,
+        *,
+        tick_interval_seconds: float = DEFAULT_TICK_INTERVAL_SECONDS,
+    ) -> None:
+        """Long-running loop: call `tick()` every `tick_interval_seconds`.
+
+        Exceptions inside a tick are logged and swallowed so one
+        bad iteration cannot take the engine down. Cancellation
+        from the host event loop is honored normally.
+        """
+        self._log.info("strategy_engine_started", interval=tick_interval_seconds)
+        while not self._stop.is_set():
+            try:
+                await self.tick()
+            except Exception as exc:  # noqa: BLE001 - log and continue
+                self._log.error(
+                    "strategy_tick_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                )
+            try:
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=tick_interval_seconds
+                )
+                break
+            except TimeoutError:
+                continue
+        self._log.info("strategy_engine_stopped")
 
     async def tick(self) -> TickResult:
         symbol = await self._active_asset.get_active_symbol()

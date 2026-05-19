@@ -82,7 +82,11 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # These modules mirror ib_insync's camelCase API surface.
 "src/tradingbot/connector/ib_client.py" = ["N802", "N803"]
+"src/tradingbot/data/ibkr_bar_source.py" = ["N802", "N803", "N815"]
+"src/tradingbot/execution/ibkr_submitter.py" = ["N802", "N803", "N815"]
 "tests/unit/test_ib_client.py" = ["N802", "N803"]
+"tests/unit/test_ibkr_bar_source.py" = ["N802", "N803", "N815"]
+"tests/unit/test_ibkr_submitter.py" = ["N802", "N803", "N815"]
 # Scripts are run interactively by the operator; print is fine there.
 "scripts/*.py" = ["T201"]
 

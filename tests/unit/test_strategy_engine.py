@@ -7,7 +7,8 @@ end-to-end so the test catches integration regressions between them.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import asyncio
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
@@ -417,5 +418,70 @@ async def test_risk_context_builder_reads_kill_switch_and_position() -> None:
     assert ctx.has_open_position is True
 
 
-# Suppress unused-import warning.
-_ = timedelta
+@pytest.mark.asyncio
+async def test_run_loops_until_stop() -> None:
+    """`run()` keeps calling `tick()` until `stop()` is set."""
+    engine, _, _ = _engine()
+    ticks_seen: list[int] = []
+    original_tick = engine.tick
+
+    async def counting_tick() -> TickResult:
+        ticks_seen.append(1)
+        return await original_tick()
+
+    engine.tick = counting_tick  # type: ignore[method-assign]
+
+    async def stop_after_ticks() -> None:
+        for _ in range(200):
+            if len(ticks_seen) >= 2:
+                break
+            await asyncio.sleep(0.005)
+        engine.stop()
+
+    await asyncio.wait_for(
+        asyncio.gather(
+            engine.run(tick_interval_seconds=0.01),
+            stop_after_ticks(),
+        ),
+        timeout=2.0,
+    )
+    assert len(ticks_seen) >= 2
+
+
+@pytest.mark.asyncio
+async def test_run_swallows_tick_exceptions() -> None:
+    """A raising tick is logged but the loop continues."""
+    engine, _, _ = _engine()
+    calls = 0
+
+    async def flaky_tick() -> TickResult:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError("boom")
+        return TickResult(
+            symbol=None,
+            state=PositionState.CERRADA,
+            signal=None,
+            router_result=None,
+        )
+
+    engine.tick = flaky_tick  # type: ignore[method-assign]
+
+    async def stop_after() -> None:
+        for _ in range(200):
+            if calls >= 3:
+                break
+            await asyncio.sleep(0.005)
+        engine.stop()
+
+    await asyncio.wait_for(
+        asyncio.gather(
+            engine.run(tick_interval_seconds=0.005),
+            stop_after(),
+        ),
+        timeout=2.0,
+    )
+    assert calls >= 3
+
+
