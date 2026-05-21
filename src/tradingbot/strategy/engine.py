@@ -32,6 +32,7 @@ from decimal import Decimal
 
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.sr_detector import SRDetector
+from tradingbot.execution.market_clock import MarketClock
 from tradingbot.execution.order_router import OrderRouter, RouterResult
 from tradingbot.logging_setup import get_logger
 from tradingbot.monitoring.kill_switch import KillSwitch
@@ -62,6 +63,7 @@ class EngineConfig:
 
     discovery: DiscoveryConfig
     trend_change_lookback_minutes: int = 60
+    no_new_entries_before_close_minutes: int = 15
 
 
 @dataclass(frozen=True)
@@ -143,6 +145,7 @@ class StrategyEngine:
         order_router: OrderRouter,
         risk_context: RiskContextBuilder,
         config: EngineConfig,
+        market_clock: MarketClock | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._active_asset = active_asset_repo
@@ -153,6 +156,7 @@ class StrategyEngine:
         self._router = order_router
         self._risk_context = risk_context
         self._config = config
+        self._market_clock = market_clock
         self._clock = clock
         self._stop = asyncio.Event()
         self._log = get_logger(__name__)
@@ -219,6 +223,12 @@ class StrategyEngine:
                 symbol=symbol, state=state, signal=None, router_result=None
             )
 
+        if self._in_no_new_entries_window():
+            self._log.info("strategy_tick_eod_no_entries", symbol=symbol)
+            return TickResult(
+                symbol=symbol, state=state, signal=None, router_result=None
+            )
+
         levels = await self._detector.detect(symbol)
         # `SRDetector.detect` already upserted into `sr_levels`; we
         # consume its in-memory return value for the entry decision.
@@ -249,6 +259,20 @@ class StrategyEngine:
         )
         return TickResult(
             symbol=symbol, state=state, signal=signal, router_result=result
+        )
+
+    def _in_no_new_entries_window(self) -> bool:
+        """True inside the pre-close window where discovery must stop.
+
+        Without a `MarketClock` the gate is disabled (e.g. in tests).
+        """
+        if self._market_clock is None:
+            return False
+        minutes_to_close = self._market_clock.minutes_to_close(self._clock())
+        if minutes_to_close is None:
+            return False
+        return (
+            minutes_to_close <= self._config.no_new_entries_before_close_minutes
         )
 
 

@@ -30,13 +30,14 @@ Mapping of our domain enums onto IBKR strings:
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from tradingbot.execution.bracket import EntryLegSpec, ExitLegSpec
 from tradingbot.execution.order_router import SubmittedBracket, SubmittedLeg
 from tradingbot.logging_setup import get_logger
-from tradingbot.persistence.enums import OrderType, TimeInForce
+from tradingbot.persistence.enums import OrderSide, OrderType, TimeInForce
 
 if TYPE_CHECKING:
     from tradingbot.connector.ib_client import IBClient
@@ -158,6 +159,49 @@ class IBKRBracketSubmitter:
                 internal_id=uuid4(),
                 ib_order_id=int(tp_trade.order.orderId),
             ),
+        )
+
+    async def cancel_order(self, ib_order_id: int) -> None:
+        """Cancel a working order by its broker id.
+
+        Used by the end-of-day flattener to pull the live bracket
+        children (and any unfilled entry) before it force-closes.
+        A missing order is logged, not raised: it usually means the
+        order already terminated, which is the desired end state.
+        """
+        ib = self._client.ib
+        for trade in ib.trades():
+            if int(trade.order.orderId) == ib_order_id:
+                ib.cancelOrder(trade.order)
+                self._log.info("ibkr_order_cancel_sent", ib_order_id=ib_order_id)
+                return
+        self._log.warning("ibkr_cancel_order_not_found", ib_order_id=ib_order_id)
+
+    async def submit_market_order(
+        self, symbol: str, side: OrderSide, qty: Decimal
+    ) -> SubmittedLeg:
+        """Submit a standalone `MarketOrder`.
+
+        Sanctioned only for the end-of-day forced flatten (CLAUDE.md
+        §6) and the kill-switch liquidation; never used for entries.
+        """
+        from ib_insync import MarketOrder, Stock
+
+        ib = self._client.ib
+        contract = Stock(symbol, exchange="SMART", currency="USD")
+        order: Any = MarketOrder(action=side.value, totalQuantity=float(qty))
+        order.tif = _TIF_TO_IBKR[TimeInForce.DAY]
+        order.transmit = True
+        trade = ib.placeOrder(contract, order)
+        self._log.info(
+            "ibkr_market_order_submitted",
+            symbol=symbol,
+            side=side.value,
+            qty=str(qty),
+            ib_order_id=trade.order.orderId,
+        )
+        return SubmittedLeg(
+            internal_id=uuid4(), ib_order_id=int(trade.order.orderId)
         )
 
 

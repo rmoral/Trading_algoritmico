@@ -29,9 +29,11 @@ from tradingbot.data.ibkr_bar_source import IBKRBarSource
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.market_data_supervisor import MarketDataSupervisor
 from tradingbot.data.sr_detector import SRDetector
+from tradingbot.execution.eod_flatten import EndOfDayFlattener
 from tradingbot.execution.fill_handler import FillHandler
 from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.ibkr_submitter import IBKRBracketSubmitter
+from tradingbot.execution.market_clock import MarketClock
 from tradingbot.execution.order_router import OrderRouter
 from tradingbot.logging_setup import configure_logging, get_logger
 from tradingbot.monitoring import KillSwitch, TelegramBot, TelegramHandlers
@@ -122,6 +124,14 @@ async def amain() -> int:
     )
     fill_stream = IBKRFillStream(ib_client, fill_handler)
     fill_stream.start()
+    market_clock = MarketClock()
+    eod_flattener = EndOfDayFlattener(
+        positions_repo=positions_repo,
+        order_repo=order_repo,
+        executor=bracket_submitter,
+        market_clock=market_clock,
+        force_flatten_minutes=runtime_config.force_flatten_before_close_minutes,
+    )
     risk_context_builder = RiskContextBuilder(
         kill_switch, positions_repo, pnl_repo
     )
@@ -134,6 +144,7 @@ async def amain() -> int:
         order_router=order_router,
         risk_context=risk_context_builder,
         config=runtime_config.engine_config,
+        market_clock=market_clock,
     )
 
     telegram_bot: TelegramBot | None = None
@@ -168,6 +179,9 @@ async def amain() -> int:
     strategy_task = asyncio.create_task(
         strategy_engine.run(), name="strategy_engine"
     )
+    eod_task = asyncio.create_task(
+        eod_flattener.run(), name="eod_flattener"
+    )
     tg_task: asyncio.Task[None] | None = None
     if telegram_bot is not None:
         tg_task = asyncio.create_task(telegram_bot.start(), name="telegram_bot")
@@ -178,6 +192,7 @@ async def amain() -> int:
     # Stop the engine first so no new orders are routed during drain,
     # then the feed, then the connector and the rest.
     strategy_engine.stop()
+    eod_flattener.stop()
     market_data_supervisor.stop()
     fill_stream.stop()
     ib_client.stop()
@@ -188,6 +203,7 @@ async def amain() -> int:
         await telegram_bot.stop()
 
     await strategy_task
+    await eod_task
     await market_data_task
     await market_data.stop()
     await ib_task

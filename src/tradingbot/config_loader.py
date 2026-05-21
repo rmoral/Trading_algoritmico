@@ -51,6 +51,7 @@ class RuntimeConfig:
     engine_config: EngineConfig
     entry_limit_cancel_seconds: int
     config_reload_seconds: int
+    force_flatten_before_close_minutes: int = 5
 
 
 def _dec(payload: dict[str, Any], key: str, default: str | int | Decimal) -> Decimal:
@@ -135,11 +136,15 @@ def build_runtime_config(payload: dict[str, Any], version: int) -> RuntimeConfig
         weights=weights,
     )
 
+    no_new_entries_before_close_minutes = _int(
+        payload, "no_new_entries_before_close_minutes", 15
+    )
     engine_config = EngineConfig(
         discovery=discovery,
         trend_change_lookback_minutes=_int(
             payload, "trend_change_lookback_minutes", 60
         ),
+        no_new_entries_before_close_minutes=no_new_entries_before_close_minutes,
     )
 
     return RuntimeConfig(
@@ -149,6 +154,9 @@ def build_runtime_config(payload: dict[str, Any], version: int) -> RuntimeConfig
         engine_config=engine_config,
         entry_limit_cancel_seconds=_int(payload, "entry_limit_cancel_seconds", 5),
         config_reload_seconds=_int(payload, "config_reload_seconds", 30),
+        force_flatten_before_close_minutes=_int(
+            payload, "force_flatten_before_close_minutes", 5
+        ),
     )
 
 

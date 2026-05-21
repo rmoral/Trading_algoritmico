@@ -18,7 +18,7 @@ import pytest
 
 from tradingbot.data import CompletedBar, DetectedLevel
 from tradingbot.data.sr_strength import StrengthComponents
-from tradingbot.execution import OrderRouter
+from tradingbot.execution import MarketClock, OrderRouter
 from tradingbot.execution.bracket import EntryLegSpec, ExitLegSpec
 from tradingbot.execution.order_router import (
     SubmittedBracket,
@@ -248,6 +248,8 @@ def _engine(
     levels: list[DetectedLevel] | None = None,
     bars: list[CompletedBar] | None = None,
     kill_tripped: bool = False,
+    market_clock: MarketClock | None = None,
+    now: datetime = datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
 ) -> tuple[StrategyEngine, FakeSubmitter, FakeSignalRepo]:
     if levels is None:
         levels = [
@@ -268,7 +270,7 @@ def _engine(
         kill_switch,
         cast("object", positions),  # type: ignore[arg-type]
         cast("object", pnl),  # type: ignore[arg-type]
-        clock=lambda: datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
+        clock=lambda: now,
     )
     engine = StrategyEngine(
         active_asset_repo=cast("object", FakeActiveAssetRepo(active_symbol)),  # type: ignore[arg-type]
@@ -279,7 +281,8 @@ def _engine(
         order_router=router,
         risk_context=context,
         config=_config(),
-        clock=lambda: datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
+        market_clock=market_clock,
+        clock=lambda: now,
     )
     return engine, submitter, signals
 
@@ -331,6 +334,24 @@ async def test_tick_emits_signal_and_submits_bracket() -> None:
     assert len(signals.inserted) == 1
     # Broker received one bracket.
     assert len(submitter.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_suppresses_entries_in_eod_window() -> None:
+    """No new entries once inside the pre-close window (CLAUDE.md §6)."""
+    # 19:50 UTC = 15:50 EDT -> 10 minutes to close, inside the
+    # default 15-minute no-new-entries window.
+    engine, submitter, signals = _engine(
+        market_clock=MarketClock(),
+        now=datetime(2026, 5, 16, 19, 50, tzinfo=UTC),
+    )
+    result = await engine.tick()
+    assert result.state == PositionState.CERRADA
+    assert result.signal is None
+    assert result.router_result is None
+    # The setup that would normally fire is suppressed: nothing routed.
+    assert signals.inserted == []
+    assert submitter.calls == []
 
 
 @pytest.mark.asyncio
