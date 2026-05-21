@@ -454,6 +454,28 @@ async def test_risk_context_builder_returns_loss_magnitude() -> None:
 
 
 @pytest.mark.asyncio
+async def test_risk_context_builder_reads_halt_state() -> None:
+    """An active halt from the halt store surfaces on the context."""
+
+    class _FakeHaltStore:
+        async def state(self) -> tuple[bool, None]:
+            return True, None
+
+    kill = KillSwitch()
+    positions = FakePositionsRepo()
+    pnl = FakePnLRepo()
+    builder = RiskContextBuilder(
+        kill,
+        cast("object", positions),  # type: ignore[arg-type]
+        cast("object", pnl),  # type: ignore[arg-type]
+        halt_store=cast("object", _FakeHaltStore()),  # type: ignore[arg-type]
+        clock=lambda: datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
+    )
+    ctx = await builder.build()
+    assert ctx.halt_active is True
+
+
+@pytest.mark.asyncio
 async def test_risk_context_builder_clamps_gains_to_zero() -> None:
     """A net gain today -> daily_loss_usd is 0, not negative."""
 

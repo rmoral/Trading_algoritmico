@@ -33,6 +33,7 @@ from decimal import Decimal
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.sr_detector import SRDetector
 from tradingbot.execution.equity_tracker import EquityTracker
+from tradingbot.execution.halt_state import HaltStateStore
 from tradingbot.execution.market_clock import MarketClock
 from tradingbot.execution.order_rate import OrderRateCounter
 from tradingbot.execution.order_router import OrderRouter, RouterResult
@@ -82,10 +83,10 @@ class RiskContextBuilder:
     """Build a `RiskContext` from the data the engine has at hand.
 
     The optional dependencies (order-rate counter, equity tracker,
-    active-asset repo) each feed one circuit-breaker input; when one
-    is absent its field falls back to a conservative default that
-    never spoofs a permissive state, so the risk manager stays a
-    strict gate.
+    active-asset repo, halt-state store) each feed one circuit-breaker
+    input; when one is absent its field falls back to a conservative
+    default that never spoofs a permissive state, so the risk manager
+    stays a strict gate.
     """
 
     def __init__(
@@ -97,6 +98,7 @@ class RiskContextBuilder:
         order_rate_counter: OrderRateCounter | None = None,
         equity_tracker: EquityTracker | None = None,
         active_asset_repo: ActiveAssetRepository | None = None,
+        halt_store: HaltStateStore | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._kill = kill_switch
@@ -105,6 +107,7 @@ class RiskContextBuilder:
         self._order_rate = order_rate_counter
         self._equity = equity_tracker
         self._active_asset = active_asset_repo
+        self._halt_store = halt_store
         self._clock = clock
 
     async def build(self) -> RiskContext:
@@ -127,6 +130,11 @@ class RiskContextBuilder:
             if self._active_asset is not None
             else False
         )
+        halt_active, halt_resumed_at = (
+            await self._halt_store.state()
+            if self._halt_store is not None
+            else (False, None)
+        )
 
         if pnl_today is None:
             daily_loss = Decimal(0)
@@ -146,8 +154,8 @@ class RiskContextBuilder:
             consecutive_losses=consecutive_losses,
             drawdown_pct_from_open=drawdown,
             is_earnings_day=is_earnings_day,
-            halt_active=False,  # TODO: subscribe to halt events
-            halt_resumed_at=None,
+            halt_active=halt_active,
+            halt_resumed_at=halt_resumed_at,
             now=now,
         )
 

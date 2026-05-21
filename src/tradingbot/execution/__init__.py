@@ -29,6 +29,8 @@ from tradingbot.execution.fill_handler import (
     BrokerOrderStatus,
     FillHandler,
 )
+from tradingbot.execution.halt_monitor import HaltMonitor
+from tradingbot.execution.halt_state import HaltStateStore
 from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.market_clock import MarketClock
 from tradingbot.execution.order_rate import OrderRateCounter
@@ -46,6 +48,8 @@ __all__ = [
     "ExitLegSpec",
     "FillHandler",
     "FlattenExecutor",
+    "HaltMonitor",
+    "HaltStateStore",
     "IBKRFillStream",
     "MarketClock",
     "OrderCanceller",

@@ -106,6 +106,10 @@ class IBLike(Protocol):
 
     def trades(self) -> list[Any]: ...
 
+    def reqMktData(self, contract: Any) -> Any: ...
+
+    def cancelMktData(self, contract: Any) -> None: ...
+
     # Declared as plain methods returning an Awaitable (not `async
     # def`) so they accept `ib_insync`'s wider `Awaitable[...]` return
     # annotation rather than requiring an exact `Coroutine[...]`.

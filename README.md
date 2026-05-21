@@ -69,6 +69,7 @@ balance. Postgres and Redis up (`docker compose up -d`), schema applied
 
 ```bash
 # 1. Choose the day's asset (the bot idles until one is selected).
+#    Add --earnings if the asset is inside an earnings blackout window.
 uv run python scripts/set_active_asset.py AAPL
 
 # 2. (Optional) Inspect bot state vs IBKR before starting.
