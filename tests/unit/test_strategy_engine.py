@@ -52,9 +52,19 @@ class FakeActiveAssetRepo:
 class FakePositionsRepo:
     def __init__(self, open_position: Position | None = None) -> None:
         self.open_position = open_position
+        self.created: list[UUID] = []
+        self.cancelled: list[UUID] = []
 
     async def get_open_position(self) -> Position | None:
         return self.open_position
+
+    async def create_opening(self, **_kwargs: object) -> UUID:
+        position_id = uuid4()
+        self.created.append(position_id)
+        return position_id
+
+    async def mark_cancelled(self, position_id: UUID, **_kwargs: object) -> None:
+        self.cancelled.append(position_id)
 
 
 class FakePnLRepo:
@@ -253,7 +263,7 @@ def _engine(
     submitter = FakeSubmitter()
     factory = _fake_session_factory()
     risk = RiskManager(_limits())
-    router = OrderRouter(submitter, risk, factory)
+    router = OrderRouter(submitter, risk, factory, positions)
     context = RiskContextBuilder(
         kill_switch,
         cast("object", positions),  # type: ignore[arg-type]

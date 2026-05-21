@@ -20,12 +20,22 @@ from tradingbot.execution.bracket import (
     ExitLegSpec,
     build_bracket,
 )
+from tradingbot.execution.fill_handler import (
+    BrokerFill,
+    BrokerOrderStatus,
+    FillHandler,
+)
+from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.order_router import OrderRouter, OrderSubmissionError
 
 __all__ = [
     "BracketSpec",
+    "BrokerFill",
+    "BrokerOrderStatus",
     "EntryLegSpec",
     "ExitLegSpec",
+    "FillHandler",
+    "IBKRFillStream",
     "OrderRouter",
     "OrderSubmissionError",
     "build_bracket",

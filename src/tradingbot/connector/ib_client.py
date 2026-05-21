@@ -39,7 +39,17 @@ CONNECTION_STATE: Gauge = Gauge(
 
 @runtime_checkable
 class IBLike(Protocol):
-    """Subset of `ib_insync.IB` we depend on, for testability."""
+    """Subset of `ib_insync.IB` we depend on, for testability.
+
+    The `*Event` attributes are `ib_insync.Event` objects: callbacks
+    register with `+=` and unregister with `-=`. They are typed
+    `Any` because `ib_insync` is an optional import (see
+    `_default_ib`).
+    """
+
+    # Order-lifecycle event streams. Names mirror `ib_insync.IB`.
+    commissionReportEvent: Any  # noqa: N815
+    orderStatusEvent: Any  # noqa: N815
 
     def isConnected(self) -> bool: ...
 
@@ -56,6 +66,12 @@ class IBLike(Protocol):
     def disconnect(self) -> None: ...
 
     async def accountSummaryAsync(self, account: str = ...) -> list[Any]: ...
+
+    def placeOrder(self, contract: Any, order: Any) -> Any: ...
+
+    def cancelOrder(self, order: Any) -> Any: ...
+
+    def trades(self) -> list[Any]: ...
 
 
 class IBClient:

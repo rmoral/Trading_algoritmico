@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tradingbot.execution.bracket import (
@@ -34,8 +35,9 @@ from tradingbot.execution.bracket import (
     build_bracket,
 )
 from tradingbot.logging_setup import get_logger
-from tradingbot.persistence.enums import OrderStatus
+from tradingbot.persistence.enums import OrderSide, OrderStatus, PositionSide
 from tradingbot.persistence.models import Order
+from tradingbot.persistence.repositories import PositionsRepository
 from tradingbot.risk import (
     OrderRequest,
     RiskContext,
@@ -89,6 +91,7 @@ class RouterResult:
     decision: RiskDecision
     bracket: SubmittedBracket | None
     parent_internal_id: UUID | None
+    position_id: UUID | None = None
 
 
 _Clock = Callable[[], datetime]
@@ -102,6 +105,7 @@ class OrderRouter:
         submitter: BracketSubmitter,
         risk_manager: RiskManager,
         session_factory: async_sessionmaker[AsyncSession],
+        positions_repo: PositionsRepository,
         *,
         signal_id_lookup: Callable[[TradingSignal], Awaitable[UUID | None]] | None = None,
         clock: _Clock = lambda: datetime.now(UTC),
@@ -109,6 +113,7 @@ class OrderRouter:
         self._submitter = submitter
         self._risk = risk_manager
         self._sessions = session_factory
+        self._positions = positions_repo
         self._lookup_signal_id = signal_id_lookup
         self._clock = clock
         self._log = get_logger(__name__)
@@ -120,16 +125,24 @@ class OrderRouter:
         *,
         signal_id: UUID | None = None,
     ) -> RouterResult:
-        """Approve the signal, build the bracket, submit it.
+        """Approve the signal, open the position, submit the bracket.
 
         Steps:
         1. Build the `BracketSpec` from the signal (pure).
         2. Build an `OrderRequest` for the parent + run RiskManager.
-        3. If approved, submit through the broker adapter.
-        4. Persist three `orders` rows in the DB (one per leg).
+        3. If approved, create the `ABRIENDO` position row — the
+           durable state is written BEFORE the broker submission it
+           authorizes (CLAUDE.md §6), and its partial unique index is
+           the last-resort guard for the single-position invariant.
+        4. Submit through the broker adapter. On a broker failure the
+           position is rolled back `ABRIENDO -> CERRADA` so the slot
+           is freed and no orphan open position is left behind.
+        5. Persist three `orders` rows in the DB (one per leg).
 
         Refusals return a `RouterResult(approved=False, decision=..)`
-        with `bracket=None`. No partial state is left in the DB.
+        with `bracket=None`. A lost race on the single-position index
+        is reported as a `HAS_OPEN_POSITION` refusal. No partial state
+        is left in the DB.
 
         `signal_id` wins over the constructor-provided lookup when
         both are present. Engines that have just persisted a Signal
@@ -153,14 +166,45 @@ class OrderRouter:
                 parent_internal_id=None,
             )
 
+        now = self._clock()
+        position_side = (
+            PositionSide.LONG
+            if signal.side is OrderSide.BUY
+            else PositionSide.SHORT
+        )
+        try:
+            position_id = await self._positions.create_opening(
+                symbol=signal.symbol,
+                side=position_side,
+                qty=signal.qty,
+                entry_price=signal.entry_price,
+                opened_at=now,
+            )
+        except IntegrityError:
+            self._log.warning(
+                "order_router_single_position_conflict", symbol=signal.symbol
+            )
+            return RouterResult(
+                approved=False,
+                decision=RiskDecision(
+                    refusals=(RiskRefusalReason.HAS_OPEN_POSITION,)
+                ),
+                bracket=None,
+                parent_internal_id=None,
+            )
+
         try:
             submitted = await self._submitter.submit_bracket(
                 bracket.entry, bracket.stop_loss, bracket.take_profit
             )
         except Exception as exc:
+            await self._positions.mark_cancelled(
+                position_id, closed_at=self._clock()
+            )
             self._log.error(
                 "order_router_broker_error",
                 symbol=signal.symbol,
+                position_id=str(position_id),
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
@@ -169,10 +213,13 @@ class OrderRouter:
         resolved_signal_id = signal_id
         if resolved_signal_id is None and self._lookup_signal_id is not None:
             resolved_signal_id = await self._lookup_signal_id(signal)
-        await self._persist_bracket(signal, bracket, submitted, resolved_signal_id)
+        await self._persist_bracket(
+            signal, bracket, submitted, resolved_signal_id, now
+        )
         self._log.info(
             "order_router_bracket_submitted",
             symbol=signal.symbol,
+            position_id=str(position_id),
             entry_ib_id=submitted.entry.ib_order_id,
             stop_ib_id=submitted.stop_loss.ib_order_id,
             tp_ib_id=submitted.take_profit.ib_order_id,
@@ -182,6 +229,7 @@ class OrderRouter:
             decision=decision,
             bracket=submitted,
             parent_internal_id=submitted.entry.internal_id,
+            position_id=position_id,
         )
 
     def _signal_to_request(
@@ -215,8 +263,8 @@ class OrderRouter:
         bracket: BracketSpec,
         submitted: SubmittedBracket,
         signal_id: UUID | None,
+        now: datetime,
     ) -> None:
-        now = self._clock()
         async with self._sessions() as db:
             db.add(
                 Order(

@@ -29,6 +29,8 @@ from tradingbot.data.ibkr_bar_source import IBKRBarSource
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.market_data_supervisor import MarketDataSupervisor
 from tradingbot.data.sr_detector import SRDetector
+from tradingbot.execution.fill_handler import FillHandler
+from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.ibkr_submitter import IBKRBracketSubmitter
 from tradingbot.execution.order_router import OrderRouter
 from tradingbot.logging_setup import configure_logging, get_logger
@@ -38,6 +40,8 @@ from tradingbot.persistence.database import create_engine, create_session_factor
 from tradingbot.persistence.repositories import (
     ActiveAssetRepository,
     BarRepository,
+    FillRepository,
+    OrderRepository,
     PnLRepository,
     PositionsRepository,
     SignalRepository,
@@ -76,6 +80,8 @@ async def amain() -> int:
     sr_level_repo = SRLevelRepository(session_factory)
     signal_repo = SignalRepository(session_factory)
     active_asset_repo = ActiveAssetRepository(session_factory)
+    order_repo = OrderRepository(session_factory)
+    fill_repo = FillRepository(session_factory)
 
     runtime_config = await load_runtime_config(session_factory)
     log.info("runtime_config_loaded", version=runtime_config.version)
@@ -105,7 +111,17 @@ async def amain() -> int:
     )
     sr_detector = SRDetector(market_data, sr_level_repo, runtime_config.sr_config)
     bracket_submitter = IBKRBracketSubmitter(ib_client)
-    order_router = OrderRouter(bracket_submitter, risk_manager, session_factory)
+    order_router = OrderRouter(
+        bracket_submitter, risk_manager, session_factory, positions_repo
+    )
+    fill_handler = FillHandler(
+        positions_repo=positions_repo,
+        order_repo=order_repo,
+        fill_repo=fill_repo,
+        pnl_repo=pnl_repo,
+    )
+    fill_stream = IBKRFillStream(ib_client, fill_handler)
+    fill_stream.start()
     risk_context_builder = RiskContextBuilder(
         kill_switch, positions_repo, pnl_repo
     )
@@ -163,6 +179,7 @@ async def amain() -> int:
     # then the feed, then the connector and the rest.
     strategy_engine.stop()
     market_data_supervisor.stop()
+    fill_stream.stop()
     ib_client.stop()
     account_logger.stop()
     state_broadcaster.stop()

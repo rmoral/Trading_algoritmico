@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from tradingbot.execution import OrderRouter, OrderSubmissionError
 from tradingbot.execution.bracket import EntryLegSpec, ExitLegSpec
@@ -21,7 +22,7 @@ from tradingbot.execution.order_router import (
     SubmittedBracket,
     SubmittedLeg,
 )
-from tradingbot.persistence.enums import OrderSide
+from tradingbot.persistence.enums import OrderSide, PositionSide
 from tradingbot.risk import (
     RiskContext,
     RiskLimits,
@@ -120,6 +121,42 @@ class FakeSubmitter:
         )
 
 
+class FakePositionsRepo:
+    """In-memory `PositionsRepository` stand-in for the router.
+
+    `create_opening` mints an id; with `conflict=True` it raises the
+    `IntegrityError` the real partial unique index would raise when a
+    position is already open.
+    """
+
+    def __init__(self, *, conflict: bool = False) -> None:
+        self.conflict = conflict
+        self.created: list[dict[str, object]] = []
+        self.cancelled: list[UUID] = []
+
+    async def create_opening(
+        self,
+        *,
+        symbol: str,
+        side: PositionSide,
+        qty: Decimal,
+        entry_price: Decimal,
+        opened_at: datetime,
+    ) -> UUID:
+        if self.conflict:
+            raise IntegrityError("INSERT", None, Exception("single open"))
+        position_id = uuid4()
+        self.created.append(
+            {"id": position_id, "symbol": symbol, "side": side, "qty": qty}
+        )
+        return position_id
+
+    async def mark_cancelled(
+        self, position_id: UUID, *, closed_at: datetime
+    ) -> None:
+        self.cancelled.append(position_id)
+
+
 def _fake_session_factory() -> MagicMock:
     """A no-op async_sessionmaker stand-in.
 
@@ -150,10 +187,12 @@ def _fake_session_factory() -> MagicMock:
 async def test_submit_signal_approved_submits_and_persists() -> None:
     submitter = FakeSubmitter()
     factory = _fake_session_factory()
+    positions = FakePositionsRepo()
     router = OrderRouter(
         submitter,
         RiskManager(_limits()),
         factory,
+        positions,
         clock=lambda: datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
     )
 
@@ -161,7 +200,11 @@ async def test_submit_signal_approved_submits_and_persists() -> None:
 
     assert result.approved is True
     assert result.bracket is not None
+    assert result.position_id is not None
     assert len(submitter.calls) == 1
+    # An ABRIENDO position was opened before submission.
+    assert len(positions.created) == 1
+    assert positions.created[0]["side"] == PositionSide.LONG
     # Three Order rows persisted, one commit.
     assert factory.session.add.call_count == 3
     factory.session.commit.assert_awaited_once()
@@ -172,7 +215,8 @@ async def test_submit_signal_refused_does_not_submit() -> None:
     submitter = FakeSubmitter()
     factory = _fake_session_factory()
     # Kill switch tripped -> immediate refusal.
-    router = OrderRouter(submitter, RiskManager(_limits()), factory)
+    positions = FakePositionsRepo()
+    router = OrderRouter(submitter, RiskManager(_limits()), factory, positions)
     result = await router.submit_signal(
         _signal(), _context(kill_switch_tripped=True)
     )
@@ -180,22 +224,41 @@ async def test_submit_signal_refused_does_not_submit() -> None:
     assert result.approved is False
     assert RiskRefusalReason.KILL_SWITCH in result.decision.refusals
     assert result.bracket is None
-    # No broker call, no DB write.
+    # No broker call, no DB write, no position opened.
     assert submitter.calls == []
+    assert positions.created == []
     factory.session.add.assert_not_called()
     factory.session.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_submit_signal_broker_error_propagates_no_persist() -> None:
+async def test_submit_signal_broker_error_rolls_back_position() -> None:
     submitter = FakeSubmitter(fail=True)
     factory = _fake_session_factory()
-    router = OrderRouter(submitter, RiskManager(_limits()), factory)
+    positions = FakePositionsRepo()
+    router = OrderRouter(submitter, RiskManager(_limits()), factory, positions)
     with pytest.raises(OrderSubmissionError):
         await router.submit_signal(_signal(), _context())
-    # No row persisted on broker failure.
+    # The ABRIENDO position is rolled back to CERRADA, no orders persisted.
+    assert len(positions.created) == 1
+    assert positions.cancelled == [positions.created[0]["id"]]
     factory.session.add.assert_not_called()
     factory.session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_submit_signal_single_position_conflict_is_refused() -> None:
+    submitter = FakeSubmitter()
+    factory = _fake_session_factory()
+    positions = FakePositionsRepo(conflict=True)
+    router = OrderRouter(submitter, RiskManager(_limits()), factory, positions)
+    result = await router.submit_signal(_signal(), _context())
+
+    assert result.approved is False
+    assert RiskRefusalReason.HAS_OPEN_POSITION in result.decision.refusals
+    # No broker call when the single-position guard trips.
+    assert submitter.calls == []
+    factory.session.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -213,6 +276,7 @@ async def test_signal_id_lookup_is_called_when_provided() -> None:
         submitter,
         RiskManager(_limits()),
         factory,
+        FakePositionsRepo(),
         signal_id_lookup=lookup,
     )
     signal = _signal()
@@ -240,7 +304,9 @@ async def test_short_signal_routes_through() -> None:
     )
     submitter = FakeSubmitter()
     factory = _fake_session_factory()
-    router = OrderRouter(submitter, RiskManager(_limits()), factory)
+    router = OrderRouter(
+        submitter, RiskManager(_limits()), factory, FakePositionsRepo()
+    )
     result = await router.submit_signal(short_signal, _context())
     assert result.approved is True
     # Entry is SELL with offset down.

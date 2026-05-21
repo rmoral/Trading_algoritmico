@@ -128,11 +128,11 @@ class IBKRBracketSubmitter:
 
         # ib_insync's `placeOrder` returns a `Trade`. After it
         # returns, `trade.order.orderId` is the IBKR-assigned id.
-        parent_trade = ib.placeOrder(contract, parent)  # type: ignore[attr-defined]
+        parent_trade = ib.placeOrder(contract, parent)
         sl.parentId = parent_trade.order.orderId
         tp.parentId = parent_trade.order.orderId
-        sl_trade = ib.placeOrder(contract, sl)  # type: ignore[attr-defined]
-        tp_trade = ib.placeOrder(contract, tp)  # type: ignore[attr-defined]
+        sl_trade = ib.placeOrder(contract, sl)
+        tp_trade = ib.placeOrder(contract, tp)
 
         self._log.info(
             "ibkr_bracket_submitted",
