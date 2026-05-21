@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol, runtime_checkable
 
 from prometheus_client import Gauge
@@ -25,6 +27,37 @@ from tradingbot.logging_setup import get_logger
 from tradingbot.settings import Settings
 
 ConnectionListener = Callable[[bool], Awaitable[None]]
+
+
+@dataclass(frozen=True)
+class BrokerPosition:
+    """A position IBKR reports for the account.
+
+    `quantity` is signed: positive = long, negative = short.
+    """
+
+    symbol: str
+    quantity: Decimal
+    avg_cost: Decimal
+
+
+@dataclass(frozen=True)
+class BrokerOpenOrder:
+    """A still-working order IBKR reports for the account."""
+
+    ib_order_id: int
+    symbol: str
+    action: str  # "BUY" / "SELL"
+    quantity: Decimal
+
+
+def _to_decimal(value: object) -> Decimal:
+    """Best-effort conversion of an `ib_insync` numeric to `Decimal`."""
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0")
+    return result if result.is_finite() else Decimal("0")
 
 INITIAL_BACKOFF_SECONDS: float = 1.0
 MAX_BACKOFF_SECONDS: float = 60.0
@@ -72,6 +105,13 @@ class IBLike(Protocol):
     def cancelOrder(self, order: Any) -> Any: ...
 
     def trades(self) -> list[Any]: ...
+
+    # Declared as plain methods returning an Awaitable (not `async
+    # def`) so they accept `ib_insync`'s wider `Awaitable[...]` return
+    # annotation rather than requiring an exact `Coroutine[...]`.
+    def reqPositionsAsync(self) -> Awaitable[list[Any]]: ...
+
+    def reqOpenOrdersAsync(self) -> Awaitable[list[Any]]: ...
 
 
 class IBClient:
@@ -214,6 +254,49 @@ class IBClient:
             return {}
         rows = await self._ib.accountSummaryAsync()
         return {row.tag: row.value for row in rows}
+
+    async def get_positions(self) -> list[BrokerPosition]:
+        """Return IBKR's view of the account's open positions.
+
+        Positions reported flat (`quantity == 0`) are dropped. Returns
+        an empty list when not connected — callers that need to
+        distinguish "flat" from "unknown" must check `is_connected()`
+        first (startup reconciliation does).
+        """
+        if not self._ib.isConnected():
+            return []
+        rows = await self._ib.reqPositionsAsync()
+        positions: list[BrokerPosition] = []
+        for row in rows:
+            quantity = _to_decimal(row.position)
+            if quantity == 0:
+                continue
+            positions.append(
+                BrokerPosition(
+                    symbol=str(row.contract.symbol),
+                    quantity=quantity,
+                    avg_cost=_to_decimal(row.avgCost),
+                )
+            )
+        return positions
+
+    async def get_open_orders(self) -> list[BrokerOpenOrder]:
+        """Return IBKR's view of the account's still-working orders.
+
+        Empty when not connected (see `get_positions`).
+        """
+        if not self._ib.isConnected():
+            return []
+        trades = await self._ib.reqOpenOrdersAsync()
+        return [
+            BrokerOpenOrder(
+                ib_order_id=int(trade.order.orderId),
+                symbol=str(trade.contract.symbol),
+                action=str(trade.order.action),
+                quantity=_to_decimal(trade.order.totalQuantity),
+            )
+            for trade in trades
+        ]
 
 
 def _default_ib() -> IBLike:

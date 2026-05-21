@@ -53,6 +53,7 @@ from tradingbot.persistence.repositories import (
     SignalRepository,
     SRLevelRepository,
 )
+from tradingbot.reconciliation import Reconciler
 from tradingbot.risk import RiskManager
 from tradingbot.settings import get_settings
 from tradingbot.state import (
@@ -100,8 +101,11 @@ async def amain() -> int:
     # Forward reference so the listener can reach the broadcaster
     # built right after.
     broadcaster_holder: dict[str, BotStateBroadcaster] = {}
+    first_connected = asyncio.Event()
 
-    async def _on_connection_change(_connected: bool) -> None:
+    async def _on_connection_change(connected: bool) -> None:
+        if connected:
+            first_connected.set()
         await broadcaster_holder["b"].publish_now()
 
     ib_client = IBClient(settings, on_connection_change=_on_connection_change)
@@ -169,6 +173,12 @@ async def amain() -> int:
         config=runtime_config.engine_config,
         market_clock=market_clock,
     )
+    reconciler = Reconciler(
+        ib_client=ib_client,
+        positions_repo=positions_repo,
+        session_factory=session_factory,
+        kill_switch=kill_switch,
+    )
 
     telegram_bot: TelegramBot | None = None
     if settings.telegram_bot_token.get_secret_value():
@@ -188,6 +198,8 @@ async def amain() -> int:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.set)
 
+    # Infrastructure tasks: connector, monitoring, feed. None of these
+    # act on positions, so they start before reconciliation.
     ib_task = asyncio.create_task(ib_client.run(), name="ib_client")
     account_task = asyncio.create_task(account_logger.run(), name="account_state_logger")
     equity_task = asyncio.create_task(
@@ -202,18 +214,42 @@ async def amain() -> int:
     market_data_task = asyncio.create_task(
         market_data_supervisor.run(), name="market_data_supervisor"
     )
-    strategy_task = asyncio.create_task(
-        strategy_engine.run(), name="strategy_engine"
-    )
-    eod_task = asyncio.create_task(
-        eod_flattener.run(), name="eod_flattener"
-    )
-    entry_timeout_task = asyncio.create_task(
-        entry_timeout_watcher.run(), name="entry_timeout_watcher"
-    )
     tg_task: asyncio.Task[None] | None = None
     if telegram_bot is not None:
         tg_task = asyncio.create_task(telegram_bot.start(), name="telegram_bot")
+
+    # Gate the trading tasks on a clean startup reconciliation against
+    # IBKR (CLAUDE.md §2 principle 7). Wait for the first connection
+    # first — reconciliation needs IBKR's real position/order view.
+    strategy_task: asyncio.Task[None] | None = None
+    eod_task: asyncio.Task[None] | None = None
+    entry_timeout_task: asyncio.Task[None] | None = None
+    connect_waiter = asyncio.create_task(first_connected.wait())
+    shutdown_waiter = asyncio.create_task(shutdown.wait())
+    _, pending = await asyncio.wait(
+        {connect_waiter, shutdown_waiter}, return_when=asyncio.FIRST_COMPLETED
+    )
+    for waiter in pending:
+        waiter.cancel()
+
+    if not shutdown.is_set():
+        reconciliation = await reconciler.reconcile_startup()
+        if reconciliation.clean:
+            strategy_task = asyncio.create_task(
+                strategy_engine.run(), name="strategy_engine"
+            )
+            eod_task = asyncio.create_task(
+                eod_flattener.run(), name="eod_flattener"
+            )
+            entry_timeout_task = asyncio.create_task(
+                entry_timeout_watcher.run(), name="entry_timeout_watcher"
+            )
+            log.info("trading_tasks_started")
+        else:
+            log.critical(
+                "trading_disabled_reconciliation_mismatch",
+                discrepancies=list(reconciliation.discrepancies),
+            )
 
     await shutdown.wait()
     log.info("shutdown_signaled")
@@ -233,9 +269,9 @@ async def amain() -> int:
     if telegram_bot is not None:
         await telegram_bot.stop()
 
-    await strategy_task
-    await eod_task
-    await entry_timeout_task
+    for trading_task in (strategy_task, eod_task, entry_timeout_task):
+        if trading_task is not None:
+            await trading_task
     await market_data_task
     await market_data.stop()
     await ib_task
