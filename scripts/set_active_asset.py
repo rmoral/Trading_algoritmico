@@ -8,8 +8,12 @@ dashboard is in the loop.
 Refused while a position is open (the bot must be flat to switch
 assets) — same rule the web app enforces.
 
+Pass `--earnings` to mark the asset as inside an earnings blackout
+window; the risk manager then refuses entries on it.
+
 Usage:
     uv run python scripts/set_active_asset.py AAPL
+    uv run python scripts/set_active_asset.py AAPL --earnings
 """
 
 from __future__ import annotations
@@ -25,10 +29,15 @@ from tradingbot_api.asset_service import AssetChangeBlockedError, set_active_ass
 
 
 async def main() -> int:
-    if len(sys.argv) != 2 or not sys.argv[1].strip():
-        print("usage: uv run python scripts/set_active_asset.py SYMBOL")
+    args = sys.argv[1:]
+    is_earnings_window = "--earnings" in args
+    positional = [a for a in args if a != "--earnings"]
+    if len(positional) != 1 or not positional[0].strip():
+        print(
+            "usage: uv run python scripts/set_active_asset.py SYMBOL [--earnings]"
+        )
         return 1
-    symbol = sys.argv[1].strip().upper()
+    symbol = positional[0].strip().upper()
     if len(symbol) > 16 or not symbol.isalnum():
         print(f"invalid symbol: {symbol!r}")
         return 1
@@ -50,12 +59,17 @@ async def main() -> int:
                     symbol=symbol,
                     actor="cli",
                     positions_repo=positions_repo,
+                    is_earnings_window=is_earnings_window,
                 )
             except AssetChangeBlockedError as exc:
                 log.error("active_asset_change_blocked", error=str(exc))
                 return 1
             await session.commit()
-            log.info("active_asset_set", symbol=selection.symbol)
+            log.info(
+                "active_asset_set",
+                symbol=selection.symbol,
+                is_earnings_window=selection.is_earnings_window,
+            )
             return 0
     finally:
         await engine.dispose()

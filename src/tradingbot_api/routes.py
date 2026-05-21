@@ -385,6 +385,7 @@ async def write_active_asset(
                 symbol=body.symbol,
                 actor=user.username,
                 positions_repo=positions_repo,
+                is_earnings_window=body.is_earnings_window,
             )
         except AssetChangeBlockedError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

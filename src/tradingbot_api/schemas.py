@@ -110,6 +110,13 @@ class SetActiveAssetRequest(BaseModel):
         pattern=r"^[A-Z][A-Z0-9.]{0,7}$",
         description="US ticker symbol, e.g. AAPL, MSFT, BRK.B.",
     )
+    is_earnings_window: bool = Field(
+        default=False,
+        description=(
+            "True if the asset is inside an earnings-announcement "
+            "blackout window; the bot refuses entries while it is set."
+        ),
+    )
 
 
 class ActiveAssetResponse(BaseModel):
@@ -122,3 +129,4 @@ class ActiveAssetResponse(BaseModel):
     effective_from: datetime
     effective_to: datetime | None
     set_by: str
+    is_earnings_window: bool

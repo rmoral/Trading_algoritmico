@@ -419,6 +419,11 @@ class ActiveAssetSelection(Base):
         DateTime(timezone=True), nullable=True
     )
     set_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    # True when the asset is inside an earnings-announcement blackout
+    # window; the risk manager refuses entries while it is set.
+    is_earnings_window: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     __table_args__ = (
         Index(

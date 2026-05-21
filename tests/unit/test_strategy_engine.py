@@ -28,6 +28,7 @@ from tradingbot.monitoring.kill_switch import KillSwitch
 from tradingbot.persistence.enums import BarResolution, PositionSide, PositionState, SRKind
 from tradingbot.persistence.models import Position
 from tradingbot.risk import RiskLimits, RiskManager
+from tradingbot.risk.types import RiskRefusalReason
 from tradingbot.strategy.discovery import DiscoveryConfig
 from tradingbot.strategy.engine import (
     EngineConfig,
@@ -42,11 +43,20 @@ from tradingbot.strategy.types import TradingSignal
 
 
 class FakeActiveAssetRepo:
-    def __init__(self, symbol: str | None = "AAPL") -> None:
+    def __init__(
+        self,
+        symbol: str | None = "AAPL",
+        *,
+        is_earnings_window: bool = False,
+    ) -> None:
         self.symbol = symbol
+        self._is_earnings_window = is_earnings_window
 
     async def get_active_symbol(self) -> str | None:
         return self.symbol
+
+    async def active_asset_earnings_window(self) -> bool:
+        return self._is_earnings_window
 
 
 class FakePositionsRepo:
@@ -258,6 +268,7 @@ def _engine(
     bars: list[CompletedBar] | None = None,
     kill_tripped: bool = False,
     market_clock: MarketClock | None = None,
+    is_earnings_window: bool = False,
     now: datetime = datetime(2026, 5, 16, 14, 30, tzinfo=UTC),
 ) -> tuple[StrategyEngine, FakeSubmitter, FakeSignalRepo]:
     if levels is None:
@@ -275,14 +286,18 @@ def _engine(
     factory = _fake_session_factory()
     risk = RiskManager(_limits())
     router = OrderRouter(submitter, risk, factory, positions)
+    active_asset = FakeActiveAssetRepo(
+        active_symbol, is_earnings_window=is_earnings_window
+    )
     context = RiskContextBuilder(
         kill_switch,
         cast("object", positions),  # type: ignore[arg-type]
         cast("object", pnl),  # type: ignore[arg-type]
+        active_asset_repo=cast("object", active_asset),  # type: ignore[arg-type]
         clock=lambda: now,
     )
     engine = StrategyEngine(
-        active_asset_repo=cast("object", FakeActiveAssetRepo(active_symbol)),  # type: ignore[arg-type]
+        active_asset_repo=cast("object", active_asset),  # type: ignore[arg-type]
         positions_repo=cast("object", positions),  # type: ignore[arg-type]
         signal_repo=cast("object", signals),  # type: ignore[arg-type]
         market_data=cast("object", FakeMarketData(bars)),  # type: ignore[arg-type]
@@ -394,6 +409,23 @@ async def test_tick_signal_refused_by_risk_does_not_persist_orders() -> None:
     assert result.router_result is not None
     assert result.router_result.approved is False
     # The signal row was inserted (audit trail) but the bracket was not.
+    assert len(signals.inserted) == 1
+    assert submitter.calls == []
+
+
+@pytest.mark.asyncio
+async def test_tick_refused_when_asset_in_earnings_window() -> None:
+    """An asset flagged inside an earnings blackout is refused."""
+    engine, submitter, signals = _engine(is_earnings_window=True)
+    result = await engine.tick()
+    assert result.signal is not None  # discovery still fires
+    assert result.router_result is not None
+    assert result.router_result.approved is False
+    assert (
+        RiskRefusalReason.EARNINGS_BLACKOUT
+        in result.router_result.decision.refusals
+    )
+    # Signal persisted for the audit trail, but no bracket submitted.
     assert len(signals.inserted) == 1
     assert submitter.calls == []
 

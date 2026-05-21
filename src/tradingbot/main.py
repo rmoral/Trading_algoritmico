@@ -161,6 +161,7 @@ async def amain() -> int:
         pnl_repo,
         order_rate_counter=order_rate_counter,
         equity_tracker=equity_tracker,
+        active_asset_repo=active_asset_repo,
     )
     strategy_engine = StrategyEngine(
         active_asset_repo=active_asset_repo,

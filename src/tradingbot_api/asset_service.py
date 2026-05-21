@@ -39,10 +39,13 @@ async def set_active_asset(
     symbol: str,
     actor: str,
     positions_repo: PositionsRepository,
+    is_earnings_window: bool = False,
 ) -> ActiveAssetSelection:
     """Create a new selection, retiring the previous one. Caller commits.
 
     Refuses (raises AssetChangeBlockedError) when a position is open.
+    `is_earnings_window` marks the asset as inside an earnings
+    blackout, which the risk manager honours.
     """
     open_pos = await positions_repo.get_open_position()
     if open_pos is not None:
@@ -65,6 +68,7 @@ async def set_active_asset(
         effective_from=now,
         effective_to=None,
         set_by=actor,
+        is_earnings_window=is_earnings_window,
     )
     db.add(new)
 
@@ -80,7 +84,7 @@ async def set_active_asset(
             entity_type="active_asset_selection",
             entity_id=str(new_id),
             before={"symbol": before_symbol} if current is not None else None,
-            after={"symbol": symbol},
+            after={"symbol": symbol, "is_earnings_window": is_earnings_window},
         )
     )
     return new

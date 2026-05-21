@@ -432,6 +432,22 @@ class ActiveAssetRepository:
             ).scalar_one_or_none()
             return current.symbol if current is not None else None
 
+    async def active_asset_earnings_window(self) -> bool:
+        """True when the current asset is flagged inside an earnings blackout.
+
+        False when no asset is selected — the risk manager's earnings
+        breaker simply does not engage until the operator picks one.
+        """
+        async with self._sessions() as session:
+            current = (
+                await session.execute(
+                    select(ActiveAssetSelection).where(
+                        ActiveAssetSelection.effective_to.is_(None)
+                    )
+                )
+            ).scalar_one_or_none()
+            return bool(current.is_earnings_window) if current is not None else False
+
 
 def _side_to_position_side(side: OrderSide) -> str:
     """`OrderSide.BUY` -> "LONG"; `OrderSide.SELL` -> "SHORT".

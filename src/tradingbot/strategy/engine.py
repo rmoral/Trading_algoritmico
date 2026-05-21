@@ -81,11 +81,11 @@ class TickResult:
 class RiskContextBuilder:
     """Build a `RiskContext` from the data the engine has at hand.
 
-    Two context fields are still defaulted (is_earnings_day,
-    halt_active / halt_resumed_at) — they will be wired as the
-    corresponding plumbing lands. The defaults are conservative: they
-    NEVER spoof a permissive state, so the risk manager remains the
-    strict gate it is.
+    The optional dependencies (order-rate counter, equity tracker,
+    active-asset repo) each feed one circuit-breaker input; when one
+    is absent its field falls back to a conservative default that
+    never spoofs a permissive state, so the risk manager stays a
+    strict gate.
     """
 
     def __init__(
@@ -96,6 +96,7 @@ class RiskContextBuilder:
         *,
         order_rate_counter: OrderRateCounter | None = None,
         equity_tracker: EquityTracker | None = None,
+        active_asset_repo: ActiveAssetRepository | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._kill = kill_switch
@@ -103,6 +104,7 @@ class RiskContextBuilder:
         self._pnl = pnl_repo
         self._order_rate = order_rate_counter
         self._equity = equity_tracker
+        self._active_asset = active_asset_repo
         self._clock = clock
 
     async def build(self) -> RiskContext:
@@ -119,6 +121,11 @@ class RiskContextBuilder:
             await self._equity.drawdown_pct(now=now)
             if self._equity is not None
             else Decimal(0)
+        )
+        is_earnings_day = (
+            await self._active_asset.active_asset_earnings_window()
+            if self._active_asset is not None
+            else False
         )
 
         if pnl_today is None:
@@ -138,7 +145,7 @@ class RiskContextBuilder:
             recent_orders_per_minute=recent_orders,
             consecutive_losses=consecutive_losses,
             drawdown_pct_from_open=drawdown,
-            is_earnings_day=False,  # TODO: earnings calendar feed
+            is_earnings_day=is_earnings_day,
             halt_active=False,  # TODO: subscribe to halt events
             halt_resumed_at=None,
             now=now,
