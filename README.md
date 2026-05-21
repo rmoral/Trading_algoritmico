@@ -4,7 +4,13 @@ Automated scalping bot for US equities via Interactive Brokers, controlled and m
 
 ## Status
 
-Phase 1 — bootstrap. Source of truth for project scope, conventions, and current state is `CLAUDE.md` (operational contract) and `PRD.md` (product requirements). Read both before contributing.
+Phase 3 — strategy engine on paper. The full discovery → entry → manage →
+exit cycle, the risk circuit breakers, the end-of-day flatten, and startup
+reconciliation against IBKR are implemented and unit-tested; the bot is ready
+for paper-trading sessions (see "Paper trading session" below). Source of
+truth for project scope, conventions, and current state is `CLAUDE.md`
+(operational contract) and `PRD.md` (product requirements). Read both before
+contributing.
 
 ## Architecture (high level)
 
@@ -48,6 +54,48 @@ uv run tradingbot-api
 The bot reads `.env` automatically. Live trading is gated by both
 `LIVE_TRADING=true` AND `IBKR_PORT=4001` — any mismatch is rejected
 at startup.
+
+## Paper trading session
+
+Run a full discovery → entry → manage → exit cycle against the IBKR paper
+account. Live trading stays disabled throughout (`LIVE_TRADING` unset,
+`IBKR_PORT=4002`).
+
+Prerequisites: IB Gateway running on the paper port (4002) with the API
+enabled and the market-data subscription active — verify with
+`uv run python scripts/smoke_ibkr.py`, which should print the account
+balance. Postgres and Redis up (`docker compose up -d`), schema applied
+(`uv run alembic upgrade head`), config seeded (`scripts/seed_config.py`).
+
+```bash
+# 1. Choose the day's asset (the bot idles until one is selected).
+uv run python scripts/set_active_asset.py AAPL
+
+# 2. (Optional) Inspect bot state vs IBKR before starting.
+uv run python scripts/reconcile.py
+
+# 3. Start the bot. On startup it reconciles its DB state against IBKR;
+#    a mismatch trips the kill switch and trading stays disabled until
+#    resolved. A clean start begins discovery on the selected asset.
+uv run tradingbot
+```
+
+During the session the bot answers Telegram `/status`, `/positions`,
+`/pnl` and `/kill`, and exposes Prometheus metrics on `:9100`. It stops
+opening entries `no_new_entries_before_close_minutes` before the close
+and force-flattens any open position `force_flatten_before_close_minutes`
+before it.
+
+Emergency liquidation — cancel every working order and flatten every
+position at the broker:
+
+```bash
+uv run python scripts/flatten_all.py            # dry run: print the plan
+uv run python scripts/flatten_all.py --confirm  # execute
+```
+
+After `flatten_all` the bot's DB view is stale; run `scripts/reconcile.py`
+and resolve the divergence before restarting the bot for trading.
 
 ## Useful commands
 
