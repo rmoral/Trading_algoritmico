@@ -22,6 +22,8 @@ from tradingbot.execution.bracket import (
 )
 from tradingbot.execution.entry_timeout import EntryTimeoutWatcher, OrderCanceller
 from tradingbot.execution.eod_flatten import EndOfDayFlattener, FlattenExecutor
+from tradingbot.execution.equity_monitor import EquityMonitor
+from tradingbot.execution.equity_tracker import EquityTracker
 from tradingbot.execution.fill_handler import (
     BrokerFill,
     BrokerOrderStatus,
@@ -39,6 +41,8 @@ __all__ = [
     "EndOfDayFlattener",
     "EntryLegSpec",
     "EntryTimeoutWatcher",
+    "EquityMonitor",
+    "EquityTracker",
     "ExitLegSpec",
     "FillHandler",
     "FlattenExecutor",

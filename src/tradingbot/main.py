@@ -31,6 +31,8 @@ from tradingbot.data.market_data_supervisor import MarketDataSupervisor
 from tradingbot.data.sr_detector import SRDetector
 from tradingbot.execution.entry_timeout import EntryTimeoutWatcher
 from tradingbot.execution.eod_flatten import EndOfDayFlattener
+from tradingbot.execution.equity_monitor import EquityMonitor
+from tradingbot.execution.equity_tracker import EquityTracker
 from tradingbot.execution.fill_handler import FillHandler
 from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.ibkr_submitter import IBKRBracketSubmitter
@@ -93,6 +95,7 @@ async def amain() -> int:
     redis = Redis.from_url(settings.redis_url)
     state_publisher = BotStatePublisher(redis)
     order_rate_counter = OrderRateCounter(redis)
+    equity_tracker = EquityTracker(redis)
 
     # Forward reference so the listener can reach the broadcaster
     # built right after.
@@ -105,6 +108,9 @@ async def amain() -> int:
     state_broadcaster = BotStateBroadcaster(ib_client, kill_switch, state_publisher)
     broadcaster_holder["b"] = state_broadcaster
     account_logger = AccountStateLogger(ib_client)
+    equity_monitor = EquityMonitor(
+        ib_client=ib_client, equity_tracker=equity_tracker
+    )
     kill_listener = KillSwitchListener(redis, kill_switch)
 
     # ----- discovery chain (CAPA 2 -> 4 -> 3) -----
@@ -150,6 +156,7 @@ async def amain() -> int:
         positions_repo,
         pnl_repo,
         order_rate_counter=order_rate_counter,
+        equity_tracker=equity_tracker,
     )
     strategy_engine = StrategyEngine(
         active_asset_repo=active_asset_repo,
@@ -183,6 +190,9 @@ async def amain() -> int:
 
     ib_task = asyncio.create_task(ib_client.run(), name="ib_client")
     account_task = asyncio.create_task(account_logger.run(), name="account_state_logger")
+    equity_task = asyncio.create_task(
+        equity_monitor.run(), name="equity_monitor"
+    )
     broadcaster_task = asyncio.create_task(
         state_broadcaster.run(), name="bot_state_broadcaster"
     )
@@ -217,6 +227,7 @@ async def amain() -> int:
     fill_stream.stop()
     ib_client.stop()
     account_logger.stop()
+    equity_monitor.stop()
     state_broadcaster.stop()
     kill_listener.stop()
     if telegram_bot is not None:
@@ -229,6 +240,7 @@ async def amain() -> int:
     await market_data.stop()
     await ib_task
     await account_task
+    await equity_task
     await broadcaster_task
     await kill_listener_task
     if tg_task is not None and not tg_task.done():
