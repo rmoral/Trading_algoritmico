@@ -59,7 +59,7 @@ class AccountStateLogger:
     async def run(self) -> None:
         """Snapshot once per interval until `stop()` is called."""
         while not self._stop_event.is_set():
-            self._snapshot()
+            await self._snapshot()
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(), timeout=self._interval_seconds
@@ -68,11 +68,11 @@ class AccountStateLogger:
             except TimeoutError:
                 continue
 
-    def _snapshot(self) -> None:
+    async def _snapshot(self) -> None:
         if not self._ib.is_connected():
             self._log.info("account_state_skip_disconnected")
             return
-        summary = self._ib.get_account_summary()
+        summary = await self._ib.get_account_summary()
         if not summary:
             self._log.info("account_state_empty")
             return

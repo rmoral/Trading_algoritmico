@@ -29,7 +29,7 @@ class FakeIBClient:
     def is_connected(self) -> bool:
         return self.connected
 
-    def get_account_summary(self) -> dict[str, str]:
+    async def get_account_summary(self) -> dict[str, str]:
         return dict(self.summary) if self.connected else {}
 
 
@@ -52,16 +52,18 @@ async def test_run_stops_promptly_on_stop() -> None:
     )
 
 
-def test_snapshot_skips_when_disconnected() -> None:
+@pytest.mark.asyncio
+async def test_snapshot_skips_when_disconnected() -> None:
     fake = FakeIBClient(connected=False, summary={"NetLiquidation": "150000.00"})
     logger = _logger(fake)
     # _snapshot is a private but stable hook; calling it directly
-    # avoids the asyncio plumbing.
-    logger._snapshot()
+    # avoids the periodic-loop plumbing.
+    await logger._snapshot()
     # Nothing crashes; gauge is unchanged from default 0.
 
 
-def test_snapshot_sets_gauges_for_known_tags() -> None:
+@pytest.mark.asyncio
+async def test_snapshot_sets_gauges_for_known_tags() -> None:
     fake = FakeIBClient(
         connected=True,
         summary={
@@ -72,7 +74,7 @@ def test_snapshot_sets_gauges_for_known_tags() -> None:
         },
     )
     logger = _logger(fake)
-    logger._snapshot()
+    await logger._snapshot()
     # Internal Gauge state: pull via the private `_value` member which
     # is the documented way to read a Gauge in tests.
     assert ACCOUNT_NET_LIQUIDATION._value.get() == 150000.0
@@ -80,16 +82,18 @@ def test_snapshot_sets_gauges_for_known_tags() -> None:
     assert ACCOUNT_TOTAL_CASH._value.get() == 150000.0
 
 
-def test_snapshot_handles_unparseable_value_without_crashing() -> None:
+@pytest.mark.asyncio
+async def test_snapshot_handles_unparseable_value_without_crashing() -> None:
     fake = FakeIBClient(
         connected=True,
         summary={"NetLiquidation": "not-a-number"},
     )
     logger = _logger(fake)
-    logger._snapshot()  # logs a warning but does not raise
+    await logger._snapshot()  # logs a warning but does not raise
 
 
-def test_snapshot_empty_summary_when_connected() -> None:
+@pytest.mark.asyncio
+async def test_snapshot_empty_summary_when_connected() -> None:
     fake = FakeIBClient(connected=True, summary={})
     logger = _logger(fake)
-    logger._snapshot()  # no error
+    await logger._snapshot()  # no error

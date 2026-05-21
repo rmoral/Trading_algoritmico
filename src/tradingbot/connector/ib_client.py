@@ -55,7 +55,7 @@ class IBLike(Protocol):
 
     def disconnect(self) -> None: ...
 
-    def accountSummary(self, account: str = ...) -> list[Any]: ...
+    async def accountSummaryAsync(self, account: str = ...) -> list[Any]: ...
 
 
 class IBClient:
@@ -183,16 +183,20 @@ class IBClient:
             except TimeoutError:
                 continue
 
-    def get_account_summary(self) -> dict[str, str]:
-        """Return the latest account summary as a dict of {tag: value}.
+    async def get_account_summary(self) -> dict[str, str]:
+        """Return the account summary as a dict of {tag: value}.
 
-        `ib_insync` keeps the values cached after `accountSummary` is
-        first called; this method returns whatever is currently
-        cached. Returns an empty dict if not yet populated.
+        Uses `ib_insync`'s ASYNC accessor. The synchronous
+        `accountSummary()` internally calls `run_until_complete`,
+        which raises `RuntimeError: This event loop is already
+        running` when invoked from inside our asyncio context — the
+        bot is async end-to-end, so the async accessor is mandatory.
+
+        Returns an empty dict when not connected.
         """
         if not self._ib.isConnected():
             return {}
-        rows = self._ib.accountSummary()
+        rows = await self._ib.accountSummaryAsync()
         return {row.tag: row.value for row in rows}
 
 

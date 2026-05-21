@@ -46,9 +46,9 @@ async def main() -> int:
         log.error("connect_failed_or_stopped")
         return 1
 
-    # Give ib_insync a moment to populate accountSummary().
+    # Give ib_insync a moment to settle after connect.
     await asyncio.sleep(2.0)
-    summary = client.get_account_summary()
+    summary = await client.get_account_summary()
 
     if not summary:
         log.warning(

@@ -59,7 +59,7 @@ class FakeIB:
         self.disconnect_calls += 1
         self._connected = False
 
-    def accountSummary(self, account: str = "") -> list[Any]:
+    async def accountSummaryAsync(self, account: str = "") -> list[Any]:
         return list(self.summary)
 
 
@@ -172,7 +172,8 @@ async def test_run_emits_heartbeat_then_reconnects_on_disconnect() -> None:
     assert ib.connect_calls >= 2
 
 
-def test_get_account_summary_returns_dict_when_connected() -> None:
+@pytest.mark.asyncio
+async def test_get_account_summary_returns_dict_when_connected() -> None:
     ib = FakeIB()
     ib._connected = True
     ib.summary = [
@@ -180,17 +181,18 @@ def test_get_account_summary_returns_dict_when_connected() -> None:
         _AccountValue("BuyingPower", "600000.00"),
     ]
     client = _client(ib)
-    assert client.get_account_summary() == {
+    assert await client.get_account_summary() == {
         "NetLiquidation": "150000.00",
         "BuyingPower": "600000.00",
     }
 
 
-def test_get_account_summary_empty_when_disconnected() -> None:
+@pytest.mark.asyncio
+async def test_get_account_summary_empty_when_disconnected() -> None:
     ib = FakeIB()
     ib._connected = False
     client = _client(ib)
-    assert client.get_account_summary() == {}
+    assert await client.get_account_summary() == {}
 
 
 @pytest.mark.asyncio
