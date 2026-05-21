@@ -1,8 +1,18 @@
 """Bot entry point.
 
 Wires settings -> logging -> kill switch -> metrics server -> IBKR
-connector + Telegram bot, runs the connector and the bot concurrently
-until a SIGTERM or SIGINT, then drains cleanly.
+connector + market data feed + discovery strategy engine + Telegram
+bot, runs them concurrently until a SIGTERM or SIGINT, then drains
+cleanly.
+
+The discovery chain is:
+
+    IBKRBarSource -> MarketDataService -> SRDetector
+                  -> StrategyEngine -> OrderRouter -> IBKRBracketSubmitter
+
+`MarketDataSupervisor` keeps the feed subscribed to whatever asset the
+operator selected in the web app. With no asset selected the engine
+simply idles — exactly the Phase 1 smoke behaviour.
 """
 
 from __future__ import annotations
@@ -13,18 +23,34 @@ import sys
 
 from redis.asyncio import Redis
 
+from tradingbot.config_loader import load_runtime_config
 from tradingbot.connector import AccountStateLogger, IBClient
+from tradingbot.data.ibkr_bar_source import IBKRBarSource
+from tradingbot.data.market_data import MarketDataService
+from tradingbot.data.market_data_supervisor import MarketDataSupervisor
+from tradingbot.data.sr_detector import SRDetector
+from tradingbot.execution.ibkr_submitter import IBKRBracketSubmitter
+from tradingbot.execution.order_router import OrderRouter
 from tradingbot.logging_setup import configure_logging, get_logger
 from tradingbot.monitoring import KillSwitch, TelegramBot, TelegramHandlers
 from tradingbot.monitoring.metrics import start_metrics_server
 from tradingbot.persistence.database import create_engine, create_session_factory
-from tradingbot.persistence.repositories import PnLRepository, PositionsRepository
+from tradingbot.persistence.repositories import (
+    ActiveAssetRepository,
+    BarRepository,
+    PnLRepository,
+    PositionsRepository,
+    SignalRepository,
+    SRLevelRepository,
+)
+from tradingbot.risk import RiskManager
 from tradingbot.settings import get_settings
 from tradingbot.state import (
     BotStateBroadcaster,
     BotStatePublisher,
     KillSwitchListener,
 )
+from tradingbot.strategy.engine import RiskContextBuilder, StrategyEngine
 
 
 async def amain() -> int:
@@ -46,6 +72,13 @@ async def amain() -> int:
     session_factory = create_session_factory(engine)
     positions_repo = PositionsRepository(session_factory)
     pnl_repo = PnLRepository(session_factory)
+    bar_repo = BarRepository(session_factory)
+    sr_level_repo = SRLevelRepository(session_factory)
+    signal_repo = SignalRepository(session_factory)
+    active_asset_repo = ActiveAssetRepository(session_factory)
+
+    runtime_config = await load_runtime_config(session_factory)
+    log.info("runtime_config_loaded", version=runtime_config.version)
 
     redis = Redis.from_url(settings.redis_url)
     state_publisher = BotStatePublisher(redis)
@@ -62,6 +95,30 @@ async def amain() -> int:
     broadcaster_holder["b"] = state_broadcaster
     account_logger = AccountStateLogger(ib_client)
     kill_listener = KillSwitchListener(redis, kill_switch)
+
+    # ----- discovery chain (CAPA 2 -> 4 -> 3) -----
+    risk_manager = RiskManager(runtime_config.risk_limits)
+    bar_source = IBKRBarSource(ib_client)
+    market_data = MarketDataService(bar_source, bar_repo)
+    market_data_supervisor = MarketDataSupervisor(
+        active_asset_repo, market_data, connected=ib_client.is_connected
+    )
+    sr_detector = SRDetector(market_data, sr_level_repo, runtime_config.sr_config)
+    bracket_submitter = IBKRBracketSubmitter(ib_client)
+    order_router = OrderRouter(bracket_submitter, risk_manager, session_factory)
+    risk_context_builder = RiskContextBuilder(
+        kill_switch, positions_repo, pnl_repo
+    )
+    strategy_engine = StrategyEngine(
+        active_asset_repo=active_asset_repo,
+        positions_repo=positions_repo,
+        signal_repo=signal_repo,
+        market_data=market_data,
+        sr_detector=sr_detector,
+        order_router=order_router,
+        risk_context=risk_context_builder,
+        config=runtime_config.engine_config,
+    )
 
     telegram_bot: TelegramBot | None = None
     if settings.telegram_bot_token.get_secret_value():
@@ -89,6 +146,12 @@ async def amain() -> int:
     kill_listener_task = asyncio.create_task(
         kill_listener.run(), name="kill_switch_listener"
     )
+    market_data_task = asyncio.create_task(
+        market_data_supervisor.run(), name="market_data_supervisor"
+    )
+    strategy_task = asyncio.create_task(
+        strategy_engine.run(), name="strategy_engine"
+    )
     tg_task: asyncio.Task[None] | None = None
     if telegram_bot is not None:
         tg_task = asyncio.create_task(telegram_bot.start(), name="telegram_bot")
@@ -96,6 +159,10 @@ async def amain() -> int:
     await shutdown.wait()
     log.info("shutdown_signaled")
 
+    # Stop the engine first so no new orders are routed during drain,
+    # then the feed, then the connector and the rest.
+    strategy_engine.stop()
+    market_data_supervisor.stop()
     ib_client.stop()
     account_logger.stop()
     state_broadcaster.stop()
@@ -103,6 +170,9 @@ async def amain() -> int:
     if telegram_bot is not None:
         await telegram_bot.stop()
 
+    await strategy_task
+    await market_data_task
+    await market_data.stop()
     await ib_task
     await account_task
     await broadcaster_task

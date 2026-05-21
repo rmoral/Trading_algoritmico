@@ -15,6 +15,7 @@ from tradingbot.data.indicators import (
     volume_profile,
 )
 from tradingbot.data.market_data import MarketDataService
+from tradingbot.data.market_data_supervisor import MarketDataSupervisor
 from tradingbot.data.pivots import ConfirmedLevel, Pivot, cross_confirm, find_pivots
 from tradingbot.data.sr_detector import (
     DetectedLevel,
@@ -45,6 +46,7 @@ __all__ = [
     "DetectedLevel",
     "IndicatorSnapshot",
     "MarketDataService",
+    "MarketDataSupervisor",
     "Pivot",
     "SRDetector",
     "SRDetectorConfig",
