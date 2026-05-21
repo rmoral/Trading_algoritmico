@@ -29,6 +29,7 @@ from tradingbot.data.ibkr_bar_source import IBKRBarSource
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.market_data_supervisor import MarketDataSupervisor
 from tradingbot.data.sr_detector import SRDetector
+from tradingbot.execution.entry_timeout import EntryTimeoutWatcher
 from tradingbot.execution.eod_flatten import EndOfDayFlattener
 from tradingbot.execution.fill_handler import FillHandler
 from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
@@ -138,6 +139,12 @@ async def amain() -> int:
         market_clock=market_clock,
         force_flatten_minutes=runtime_config.force_flatten_before_close_minutes,
     )
+    entry_timeout_watcher = EntryTimeoutWatcher(
+        positions_repo=positions_repo,
+        order_repo=order_repo,
+        canceller=bracket_submitter,
+        timeout_seconds=runtime_config.entry_limit_cancel_seconds,
+    )
     risk_context_builder = RiskContextBuilder(
         kill_switch,
         positions_repo,
@@ -191,6 +198,9 @@ async def amain() -> int:
     eod_task = asyncio.create_task(
         eod_flattener.run(), name="eod_flattener"
     )
+    entry_timeout_task = asyncio.create_task(
+        entry_timeout_watcher.run(), name="entry_timeout_watcher"
+    )
     tg_task: asyncio.Task[None] | None = None
     if telegram_bot is not None:
         tg_task = asyncio.create_task(telegram_bot.start(), name="telegram_bot")
@@ -202,6 +212,7 @@ async def amain() -> int:
     # then the feed, then the connector and the rest.
     strategy_engine.stop()
     eod_flattener.stop()
+    entry_timeout_watcher.stop()
     market_data_supervisor.stop()
     fill_stream.stop()
     ib_client.stop()
@@ -213,6 +224,7 @@ async def amain() -> int:
 
     await strategy_task
     await eod_task
+    await entry_timeout_task
     await market_data_task
     await market_data.stop()
     await ib_task

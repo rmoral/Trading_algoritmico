@@ -20,6 +20,7 @@ from tradingbot.execution.bracket import (
     ExitLegSpec,
     build_bracket,
 )
+from tradingbot.execution.entry_timeout import EntryTimeoutWatcher, OrderCanceller
 from tradingbot.execution.eod_flatten import EndOfDayFlattener, FlattenExecutor
 from tradingbot.execution.fill_handler import (
     BrokerFill,
@@ -28,6 +29,7 @@ from tradingbot.execution.fill_handler import (
 )
 from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.market_clock import MarketClock
+from tradingbot.execution.order_rate import OrderRateCounter
 from tradingbot.execution.order_router import OrderRouter, OrderSubmissionError
 
 __all__ = [
@@ -36,11 +38,14 @@ __all__ = [
     "BrokerOrderStatus",
     "EndOfDayFlattener",
     "EntryLegSpec",
+    "EntryTimeoutWatcher",
     "ExitLegSpec",
     "FillHandler",
     "FlattenExecutor",
     "IBKRFillStream",
     "MarketClock",
+    "OrderCanceller",
+    "OrderRateCounter",
     "OrderRouter",
     "OrderSubmissionError",
     "build_bracket",
