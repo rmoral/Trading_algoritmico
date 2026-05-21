@@ -79,12 +79,12 @@ class TickResult:
 class RiskContextBuilder:
     """Build a `RiskContext` from the data the engine has at hand.
 
-    Several context fields are still defaulted (consecutive_losses,
-    drawdown_pct_from_open, is_earnings_day, halt_active /
-    halt_resumed_at, recent_orders_per_minute) — they will be wired
-    as the corresponding plumbing lands. The defaults are
-    conservative: they NEVER spoof a permissive state, so the risk
-    manager remains the strict gate it is.
+    Several context fields are still defaulted (drawdown_pct_from_open,
+    is_earnings_day, halt_active / halt_resumed_at,
+    recent_orders_per_minute) — they will be wired as the
+    corresponding plumbing lands. The defaults are conservative: they
+    NEVER spoof a permissive state, so the risk manager remains the
+    strict gate it is.
     """
 
     def __init__(
@@ -104,6 +104,7 @@ class RiskContextBuilder:
         now = self._clock()
         open_position = await self._positions.get_open_position()
         pnl_today = await self._pnl.get_pnl_for_date(now.date())
+        consecutive_losses = await self._positions.recent_consecutive_losses()
 
         if pnl_today is None:
             daily_loss = Decimal(0)
@@ -120,7 +121,7 @@ class RiskContextBuilder:
             daily_loss_usd=daily_loss,
             trades_today=trades_today,
             recent_orders_per_minute=0,  # TODO: rolling counter in Redis
-            consecutive_losses=0,  # TODO: derive from `positions` history
+            consecutive_losses=consecutive_losses,
             drawdown_pct_from_open=Decimal(0),  # TODO: account equity tracking
             is_earnings_day=False,  # TODO: earnings calendar feed
             halt_active=False,  # TODO: subscribe to halt events

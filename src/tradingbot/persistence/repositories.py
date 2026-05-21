@@ -12,6 +12,7 @@ is invoked against a running Postgres.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -57,6 +58,28 @@ class PositionNotFoundError(RuntimeError):
     """Raised when a lifecycle write targets a position id that is absent."""
 
 
+# Most recent closed positions scanned for a loss streak. The risk
+# manager trips at `consecutive_losses_limit` (default 5); a 100-row
+# window dwarfs any streak that could survive the daily loss cap.
+_LOSS_STREAK_SCAN_LIMIT: int = 100
+
+
+def consecutive_loss_streak(closed_positions: Sequence[Position]) -> int:
+    """Count losing trades from the most recent backwards.
+
+    `closed_positions` must be ordered most-recent-first. A position
+    is a loss when net P&L (`realized_pnl - commissions`) is strictly
+    negative; the first non-loss (win or breakeven) ends the streak.
+    """
+    streak = 0
+    for position in closed_positions:
+        if position.realized_pnl - position.commissions < 0:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 class PositionsRepository:
     """Read + lifecycle-write access to the `positions` table.
 
@@ -85,6 +108,28 @@ class PositionsRepository:
                 select(Position).where(Position.state.in_(open_states))
             )
             return result.scalar_one_or_none()
+
+    async def recent_consecutive_losses(self) -> int:
+        """Losing trades ending at the most recently closed position.
+
+        Only realised round trips count: an `ABRIENDO -> CERRADA`
+        release of an unfilled entry (`avg_exit_price IS NULL`) never
+        opened, so it neither extends nor breaks the streak and is
+        excluded from the scan.
+        """
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(Position)
+                    .where(
+                        Position.state == PositionState.CERRADA.value,
+                        Position.avg_exit_price.isnot(None),
+                    )
+                    .order_by(Position.closed_at.desc())
+                    .limit(_LOSS_STREAK_SCAN_LIMIT)
+                )
+            ).scalars().all()
+        return consecutive_loss_streak(list(rows))
 
     async def create_opening(
         self,

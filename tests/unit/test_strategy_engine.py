@@ -50,13 +50,22 @@ class FakeActiveAssetRepo:
 
 
 class FakePositionsRepo:
-    def __init__(self, open_position: Position | None = None) -> None:
+    def __init__(
+        self,
+        open_position: Position | None = None,
+        *,
+        consecutive_losses: int = 0,
+    ) -> None:
         self.open_position = open_position
         self.created: list[UUID] = []
         self.cancelled: list[UUID] = []
+        self._consecutive_losses = consecutive_losses
 
     async def get_open_position(self) -> Position | None:
         return self.open_position
+
+    async def recent_consecutive_losses(self) -> int:
+        return self._consecutive_losses
 
     async def create_opening(self, **_kwargs: object) -> UUID:
         position_id = uuid4()
