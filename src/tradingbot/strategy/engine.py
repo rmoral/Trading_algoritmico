@@ -33,6 +33,7 @@ from decimal import Decimal
 from tradingbot.data.market_data import MarketDataService
 from tradingbot.data.sr_detector import SRDetector
 from tradingbot.execution.market_clock import MarketClock
+from tradingbot.execution.order_rate import OrderRateCounter
 from tradingbot.execution.order_router import OrderRouter, RouterResult
 from tradingbot.logging_setup import get_logger
 from tradingbot.monitoring.kill_switch import KillSwitch
@@ -80,11 +81,10 @@ class RiskContextBuilder:
     """Build a `RiskContext` from the data the engine has at hand.
 
     Several context fields are still defaulted (drawdown_pct_from_open,
-    is_earnings_day, halt_active / halt_resumed_at,
-    recent_orders_per_minute) — they will be wired as the
-    corresponding plumbing lands. The defaults are conservative: they
-    NEVER spoof a permissive state, so the risk manager remains the
-    strict gate it is.
+    is_earnings_day, halt_active / halt_resumed_at) — they will be
+    wired as the corresponding plumbing lands. The defaults are
+    conservative: they NEVER spoof a permissive state, so the risk
+    manager remains the strict gate it is.
     """
 
     def __init__(
@@ -93,11 +93,13 @@ class RiskContextBuilder:
         positions_repo: PositionsRepository,
         pnl_repo: PnLRepository,
         *,
+        order_rate_counter: OrderRateCounter | None = None,
         clock: Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._kill = kill_switch
         self._positions = positions_repo
         self._pnl = pnl_repo
+        self._order_rate = order_rate_counter
         self._clock = clock
 
     async def build(self) -> RiskContext:
@@ -105,6 +107,11 @@ class RiskContextBuilder:
         open_position = await self._positions.get_open_position()
         pnl_today = await self._pnl.get_pnl_for_date(now.date())
         consecutive_losses = await self._positions.recent_consecutive_losses()
+        recent_orders = (
+            await self._order_rate.count_last_minute(now)
+            if self._order_rate is not None
+            else 0
+        )
 
         if pnl_today is None:
             daily_loss = Decimal(0)
@@ -120,7 +127,7 @@ class RiskContextBuilder:
             has_open_position=open_position is not None,
             daily_loss_usd=daily_loss,
             trades_today=trades_today,
-            recent_orders_per_minute=0,  # TODO: rolling counter in Redis
+            recent_orders_per_minute=recent_orders,
             consecutive_losses=consecutive_losses,
             drawdown_pct_from_open=Decimal(0),  # TODO: account equity tracking
             is_earnings_day=False,  # TODO: earnings calendar feed

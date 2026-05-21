@@ -34,6 +34,7 @@ from tradingbot.execution.bracket import (
     ExitLegSpec,
     build_bracket,
 )
+from tradingbot.execution.order_rate import OrderRateCounter
 from tradingbot.logging_setup import get_logger
 from tradingbot.persistence.enums import OrderSide, OrderStatus, PositionSide
 from tradingbot.persistence.models import Order
@@ -96,6 +97,9 @@ class RouterResult:
 
 _Clock = Callable[[], datetime]
 
+# A bracket submission places three IBKR orders (entry + stop + TP).
+_BRACKET_LEG_COUNT: int = 3
+
 
 class OrderRouter:
     """Gate every entry through the risk manager, then submit the bracket."""
@@ -108,6 +112,7 @@ class OrderRouter:
         positions_repo: PositionsRepository,
         *,
         signal_id_lookup: Callable[[TradingSignal], Awaitable[UUID | None]] | None = None,
+        order_rate_counter: OrderRateCounter | None = None,
         clock: _Clock = lambda: datetime.now(UTC),
     ) -> None:
         self._submitter = submitter
@@ -115,6 +120,7 @@ class OrderRouter:
         self._sessions = session_factory
         self._positions = positions_repo
         self._lookup_signal_id = signal_id_lookup
+        self._order_rate = order_rate_counter
         self._clock = clock
         self._log = get_logger(__name__)
 
@@ -216,6 +222,8 @@ class OrderRouter:
         await self._persist_bracket(
             signal, bracket, submitted, resolved_signal_id, now
         )
+        if self._order_rate is not None:
+            await self._order_rate.record(_BRACKET_LEG_COUNT, now=now)
         self._log.info(
             "order_router_bracket_submitted",
             symbol=signal.symbol,

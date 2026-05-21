@@ -34,6 +34,7 @@ from tradingbot.execution.fill_handler import FillHandler
 from tradingbot.execution.ibkr_fill_stream import IBKRFillStream
 from tradingbot.execution.ibkr_submitter import IBKRBracketSubmitter
 from tradingbot.execution.market_clock import MarketClock
+from tradingbot.execution.order_rate import OrderRateCounter
 from tradingbot.execution.order_router import OrderRouter
 from tradingbot.logging_setup import configure_logging, get_logger
 from tradingbot.monitoring import KillSwitch, TelegramBot, TelegramHandlers
@@ -90,6 +91,7 @@ async def amain() -> int:
 
     redis = Redis.from_url(settings.redis_url)
     state_publisher = BotStatePublisher(redis)
+    order_rate_counter = OrderRateCounter(redis)
 
     # Forward reference so the listener can reach the broadcaster
     # built right after.
@@ -114,7 +116,11 @@ async def amain() -> int:
     sr_detector = SRDetector(market_data, sr_level_repo, runtime_config.sr_config)
     bracket_submitter = IBKRBracketSubmitter(ib_client)
     order_router = OrderRouter(
-        bracket_submitter, risk_manager, session_factory, positions_repo
+        bracket_submitter,
+        risk_manager,
+        session_factory,
+        positions_repo,
+        order_rate_counter=order_rate_counter,
     )
     fill_handler = FillHandler(
         positions_repo=positions_repo,
@@ -133,7 +139,10 @@ async def amain() -> int:
         force_flatten_minutes=runtime_config.force_flatten_before_close_minutes,
     )
     risk_context_builder = RiskContextBuilder(
-        kill_switch, positions_repo, pnl_repo
+        kill_switch,
+        positions_repo,
+        pnl_repo,
+        order_rate_counter=order_rate_counter,
     )
     strategy_engine = StrategyEngine(
         active_asset_repo=active_asset_repo,
